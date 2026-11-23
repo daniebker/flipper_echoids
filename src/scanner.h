@@ -73,6 +73,7 @@ typedef struct {
     uint32_t bts;
     uint32_t tx_cmds;
     uint32_t resends;
+    uint32_t reboots; /* ESP32 ROM boot banners seen ("rst:0x..") */
 } ScanStats;
 
 extern const uint32_t scanner_baud_rates[];

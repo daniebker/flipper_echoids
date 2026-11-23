@@ -363,7 +363,9 @@ static void draw_collect(App* app, Canvas* canvas) {
             scanner_get_stats(app->scanner, &st);
             char info[40];
             const char* status;
-            if(!scanner_board_alive(app->scanner)) {
+            if(st.reboots >= 3) {
+                status = "Board keeps rebooting!";
+            } else if(!scanner_board_alive(app->scanner)) {
                 status = waited > furi_ms_to_ticks(BOARD_TIMEOUT_MS) ? "Board is silent" :
                                                                        "Waiting for board...";
             } else if(st.rx_garbage > st.rx_printable / 4) {
@@ -385,7 +387,11 @@ static void draw_collect(App* app, Canvas* canvas) {
             canvas_draw_str_aligned(canvas, 64, 29, AlignCenter, AlignCenter, info);
             char last[SCAN_LOG_LEN * 2];
             scanner_last_rx(app->scanner, last, sizeof(last));
-            if(last[0]) {
+            if(st.reboots >= 3) {
+                snprintf(info, sizeof(info), "%lu resets: firmware crash", (unsigned long)st.reboots);
+                canvas_draw_str_aligned(canvas, 64, 41, AlignCenter, AlignCenter, info);
+                canvas_draw_str_aligned(canvas, 64, 51, AlignCenter, AlignCenter, "or power. Reflash/USB test");
+            } else if(last[0]) {
                 canvas_set_font(canvas, FontKeyboard);
                 canvas_draw_str(canvas, 0, 40, "Last line from board:");
                 canvas_draw_str(canvas, 0, 48, last);
@@ -942,14 +948,18 @@ static void draw_terminal(App* app, Canvas* canvas) {
         canvas, 127, 7, AlignRight, AlignBottom, furi_hal_power_is_otg_enabled() ? "5V on" : "5V off");
 
     canvas_set_font(canvas, FontKeyboard);
-    snprintf(
-        buf,
-        sizeof(buf),
-        "rx%lu bad%lu ap%lu bt%lu",
-        (unsigned long)st.rx_bytes,
-        (unsigned long)st.rx_garbage,
-        (unsigned long)st.aps,
-        (unsigned long)st.bts);
+    if(st.reboots >= 3) {
+        snprintf(buf, sizeof(buf), "REBOOT LOOP x%lu", (unsigned long)st.reboots);
+    } else {
+        snprintf(
+            buf,
+            sizeof(buf),
+            "rx%lu bad%lu ap%lu bt%lu",
+            (unsigned long)st.rx_bytes,
+            (unsigned long)st.rx_garbage,
+            (unsigned long)st.aps,
+            (unsigned long)st.bts);
+    }
     canvas_draw_str(canvas, 0, 15, buf);
     canvas_draw_line(canvas, 0, 17, 127, 17);
 
