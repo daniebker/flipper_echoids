@@ -18,6 +18,9 @@ jobs:
           cc -std=c11 -Wall -Wextra -Werror -Isrc src/game.c tools/gen_wiki.c -o gen_wiki
           ./gen_wiki types > docs/wiki/Types.md
           ./gen_wiki moves > docs/wiki/Types-and-Moves.md
+          ./gen_wiki echoids > docs/wiki/Echoids.md
+          ./gen_wiki items > docs/wiki/Items-and-Crafting.md
+          ./gen_wiki battles > docs/wiki/Battles.md
           git diff --exit-code docs/wiki/
 
   build:

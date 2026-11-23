@@ -65,6 +65,9 @@ from a fixed pool of fake devices, so you can play and test without hardware.
 
 ## How to play
 
+The **[wiki](docs/wiki/Home.md)** has the full details: echoids and the star rating, types
+and the matchup chart, every move, battles and catch chances, and items and crafting.
+
 | Screen | Controls |
 |---|---|
 | **Collect** | Starts scanning. The top right shows how many echoids you've spotted (ball icon) and how many shards you've collected (diamond icon) since opening the app. Nearby access points are listed as echoids, showing species, level, type and signal strength. The panel at the bottom shows the selected echoid's rarity, type and stats (HP, ATK, DEF, SPD) at the level it would battle at. `*` = already caught (in your team or PAC), `x` = already fought this session. The letter after the type is the echoid's **rarity**: `C` Common, `U` Uncommon, `R` Rare, and `E` Epic or `L` Legendary in a box so they stand out. The same badge appears in the Team and PAC lists and under the wild echoid's name in battle. **OK** battles the selected echoid. You can't battle or catch an echoid you already own; the app checks your team and PAC when you press OK, when you open the ball menu and before it stores a catch, so you can't end up with duplicates. **Back** stops scanning. Bluetooth shards are collected automatically and shown in a popup. |
@@ -226,7 +229,7 @@ rating only judges the random roll, so a Common can be perfect too.
   HP rolls 0–16. ATK, DEF and SPD roll 0–8.
 - **Overall**, the four stats' stars add up to between 4 and 12:
   - ★★★ means all four are ★★★: a **perfect** echoid whose stats can't be any stronger.
-    About 1 in 14,000 echoids is perfect.
+    Exactly 1 in 12,393 echoids is perfect.
   - ★★☆ means 8–11 stars in total, about 1 in 4 echoids.
   - ★☆☆ means 7 or fewer.
 - **Where to see it:** the overall stars appear in the Collect info panel, so you can rate a
@@ -328,19 +331,15 @@ built files can be downloaded from each workflow run.
 
 ### Wiki pages
 
-`docs/wiki/Types.md` and `docs/wiki/Types-and-Moves.md` are generated from the game's tables.
-After changing moves or types, regenerate them (CI fails if they're out of date):
+The wiki in `docs/wiki/` ([start here](docs/wiki/Home.md)) is generated from the game's code,
+apart from the Home page. After changing the game, regenerate it (CI fails if it's out of date):
 
 ```bash
 cc -std=c11 -Isrc src/game.c tools/gen_wiki.c -o gen_wiki
 ```
 
 ```bash
-./gen_wiki types > docs/wiki/Types.md
-```
-
-```bash
-./gen_wiki moves > docs/wiki/Types-and-Moves.md
+./gen_wiki types > docs/wiki/Types.md && ./gen_wiki moves > docs/wiki/Types-and-Moves.md && ./gen_wiki echoids > docs/wiki/Echoids.md && ./gen_wiki items > docs/wiki/Items-and-Crafting.md && ./gen_wiki battles > docs/wiki/Battles.md
 ```
 
 ### Tests
@@ -365,5 +364,5 @@ src/save.[ch]          Save file (team, items, settings) and upgrades from old v
 src/pac_store.[ch]     PAC storage file on the SD card (unlimited stored echoids)
 tests/test_game.c      Host-side unit tests
 tools/gen_wiki.c       Generates the wiki pages from the game tables
-docs/wiki/             Wiki: Home, Types, Types and Moves
+docs/wiki/             Wiki: Home, Echoids, Types, Types and Moves, Battles, Items and Crafting
 ```

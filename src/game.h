@@ -209,6 +209,14 @@ bool echo_active_at(const uint8_t mac[6], uint8_t hour);
 uint8_t echo_type_mult(uint8_t attacker, uint8_t defender);
 uint8_t echo_capture_chance(const Echoid* wild, uint8_t ball);
 
+/* Rules as numbers, for docs and tools. */
+uint8_t rarity_chance_pct(uint8_t rarity);
+uint8_t shard_tier_chance_pct(uint8_t tier);
+uint8_t capture_base_pct(uint8_t rarity);
+uint8_t ball_mult_x10(uint8_t ball); /* 10 = x1.0 */
+void active_window_len(uint8_t rarity, uint8_t* lo, uint8_t* hi);
+uint32_t battle_xp_reward(uint8_t wild_level, uint8_t rarity, bool captured);
+
 /* ---------- Team ---------- */
 /* Removes team[idx] into *out, keeping order. Refuses the last member. The
  * lead index follows its echoid; if the lead itself leaves, the first

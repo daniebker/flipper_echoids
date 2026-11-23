@@ -290,6 +290,18 @@ uint32_t echo_hash_mac(const uint8_t mac[6]) {
     return h;
 }
 
+/* Percent chances, in order. */
+static const uint8_t rarity_chance[RarityCount] = {50, 28, 14, 6, 2};
+static const uint8_t shard_tier_chance[SHARD_TIER_COUNT] = {70, 25, 5};
+
+uint8_t rarity_chance_pct(uint8_t rarity) {
+    return rarity < RarityCount ? rarity_chance[rarity] : 0;
+}
+
+uint8_t shard_tier_chance_pct(uint8_t tier) {
+    return tier < SHARD_TIER_COUNT ? shard_tier_chance[tier] : 0;
+}
+
 void echo_genes(const uint8_t mac[6], EchoGenes* g) {
     MacStream st = {.s = echo_hash_mac(mac)};
     g->seed = st.s;
@@ -298,16 +310,14 @@ void echo_genes(const uint8_t mac[6], EchoGenes* g) {
     g->type = r % ECHO_TYPE_COUNT;
 
     r = mac_stream_next(&st) % 100;
-    if(r < 50)
-        g->rarity = RarityCommon;
-    else if(r < 78)
-        g->rarity = RarityUncommon;
-    else if(r < 92)
-        g->rarity = RarityRare;
-    else if(r < 98)
-        g->rarity = RarityEpic;
-    else
-        g->rarity = RarityLegendary;
+    g->rarity = RarityLegendary;
+    for(uint8_t k = 0, acc = 0; k < RarityCount; k++) {
+        acc += rarity_chance[k];
+        if(r < acc) {
+            g->rarity = k;
+            break;
+        }
+    }
 
     /* Rarer creatures tend to be the evolved-looking species. */
     r = mac_stream_next(&st) % 10;
@@ -529,7 +539,10 @@ Shard shard_from_mac(const uint8_t mac[6]) {
     Shard s;
     s.type = mac_stream_next(&st) % ECHO_TYPE_COUNT;
     uint32_t r = mac_stream_next(&st) % 100;
-    s.tier = r < 70 ? ShardDull : (r < 95 ? ShardBright : ShardPrismatic);
+    s.tier = r < shard_tier_chance[ShardDull] ?
+                 ShardDull :
+                 (r < shard_tier_chance[ShardDull] + shard_tier_chance[ShardBright] ? ShardBright :
+                                                                                     ShardPrismatic);
     return s;
 }
 
@@ -663,6 +676,26 @@ uint8_t echo_type_mult(uint8_t attacker, uint8_t defender) {
 
 static const uint8_t capture_base[RarityCount] = {60, 45, 30, 18, 8};
 static const uint8_t ball_mult10[3] = {10, 15, 25};
+
+uint8_t capture_base_pct(uint8_t rarity) {
+    return rarity < RarityCount ? capture_base[rarity] : 0;
+}
+
+uint8_t ball_mult_x10(uint8_t ball) {
+    return ball <= ItemPrismBall ? ball_mult10[ball] : 0;
+}
+
+void active_window_len(uint8_t rarity, uint8_t* lo, uint8_t* hi) {
+    *lo = active_len[rarity % RarityCount][0];
+    *hi = active_len[rarity % RarityCount][1];
+}
+
+uint32_t battle_xp_reward(uint8_t wild_level, uint8_t rarity, bool captured) {
+    uint32_t xp = 8u + wild_level * 5u;
+    xp = xp * (100u + 25u * rarity) / 100u;
+    if(captured) xp = xp * 3u / 2u;
+    return xp;
+}
 
 uint8_t echo_capture_chance(const Echoid* wild, uint8_t ball) {
     if(ball > ItemPrismBall) return 0;
@@ -955,9 +988,7 @@ static bool do_attack(Battle* b, Echoid* atk, Echoid* def, const Move* mv, bool 
 static void award_xp(Battle* b, bool captured) {
     EchoGenes g;
     echo_genes(b->wild.mac, &g);
-    uint32_t xp = 8u + b->wild.level * 5u;
-    xp = xp * (100u + 25u * g.rarity) / 100u;
-    if(captured) xp = xp * 3u / 2u;
+    uint32_t xp = battle_xp_reward(b->wild.level, g.rarity, captured);
     b->xp_gained = xp;
     /* Everyone who fought shares the XP equally. */
     uint32_t share = b->fought_n ? xp / b->fought_n : xp;
