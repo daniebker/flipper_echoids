@@ -1733,8 +1733,10 @@ static void handle_bt(App* app, const ScanEvent* ev) {
 static void battle_begin(App* app) {
     if(app->nearby_count == 0) return;
     Nearby* n = &app->nearby[app->nearby_idx];
-    if(n->state == NearbyOwned) {
-        app_toast(app, "Already in your team");
+    /* Check ownership live (team and PAC), not just the list's cached mark. */
+    if(n->state == NearbyOwned || app_owns(app, n->mac)) {
+        n->state = NearbyOwned;
+        app_toast(app, "Already caught");
         return;
     }
     if(n->state == NearbyDone) {
@@ -1858,18 +1860,26 @@ static void battle_after_action(App* app) {
         Echoid caught = b->wild;
         if(caught.hp == 0) caught.hp = 1;
         caught.flags = 0;
-        if(sv->team_count < PARTY_MAX) {
+        bool stored = false;
+        if(app_owns(app, caught.mac)) {
+            /* Never store a second copy of an echoid you already have. */
+            battle_log_line(b, "Already caught this one!");
+        } else if(sv->team_count < PARTY_MAX) {
             sv->team[sv->team_count++] = caught;
+            stored = true;
         } else if(pac_has_room(app) && pac_append(&caught)) {
             sv->pac_count++;
             pac_invalidate(app);
             battle_log_line(b, "Team full: sent to PAC");
+            stored = true;
         } else {
             battle_log_line(b, "Couldn't store it!");
         }
-        sv->captures++;
-        if(n) n->state = NearbyOwned;
-        notification_message(app->notif, &sequence_success);
+        if(stored) {
+            sv->captures++;
+            notification_message(app->notif, &sequence_success);
+        }
+        if(n && (stored || app_owns(app, caught.mac))) n->state = NearbyOwned;
         break;
     }
     case BattleWon:
@@ -2221,7 +2231,9 @@ static void handle_input(App* app, InputEvent* ev) {
                 battle_swap_open(app, false);
                 break;
             case 2:
-                if(app->save.team_count >= PARTY_MAX && !pac_has_room(app)) {
+                if(app_owns(app, app->battle.wild.mac)) {
+                    battle_log_line(&app->battle, "Already caught this one!");
+                } else if(app->save.team_count >= PARTY_MAX && !pac_has_room(app)) {
                     battle_log_line(&app->battle, "No room: craft a PAC!");
                 } else {
                     app->screen = ScreenBallPick;
