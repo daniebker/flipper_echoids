@@ -63,7 +63,7 @@ from a fixed pool of fake devices, so you can play and test without hardware.
 
 | Screen | Controls |
 |---|---|
-| **Collect** | Starts scanning. Nearby access points are listed with their level, type and signal strength. `*` = already in your team, `x` = already fought this session. **OK** battles the selected echoid. **Back** stops scanning. Bluetooth shards are collected automatically and shown in a popup. |
+| **Collect** | Starts scanning. The top right shows how many echoids you've spotted (ball icon) and how many shards you've collected (diamond icon) since opening the app. Nearby access points are listed with their level, type and signal strength. `*` = already in your team, `x` = already fought this session. **OK** battles the selected echoid. **Back** stops scanning. Bluetooth shards are collected automatically and shown in a popup. |
 | **Battle** | **←/→** choose an action, **OK** confirms. **Hit** is a plain attack. **Skill** is a stronger, less accurate attack that uses type matchups. **Ball** opens the throw menu, which shows each ball's catch chance. **Run** tries to escape. |
 | **Team** | Lists your echoids. **OK** opens one's details, **←/→** browses, and **OK** on the details screen makes it your lead (the echoid that fights). |
 | **Craft** | `+` marks recipes you can afford. **OK** crafts one. |

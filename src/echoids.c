@@ -27,6 +27,7 @@
 #define TEAM_ROWS        5
 #define NEARBY_ROWS      4
 #define CRAFT_ROWS       3
+#define SPOTTED_MAX      128
 
 typedef enum {
     ScreenIntro,
@@ -109,6 +110,11 @@ typedef struct {
     int32_t cal_best_score;
     int16_t cal_best;
     char cal_result[32];
+
+    /* Counters for this outing (since the app was opened). */
+    uint32_t spotted[SPOTTED_MAX]; /* MAC hashes of echoids already counted */
+    uint16_t spotted_count;
+    uint16_t shards_this_run;
 
     char toast[40];
     uint32_t toast_until;
@@ -294,21 +300,50 @@ static void draw_menu(App* app, Canvas* canvas) {
     draw_hp_bar(canvas, 88, 58, 38, e->hp, s.max_hp);
 }
 
+/* Small echo ball: circle with a band and a centre dot. */
+static void draw_ball_icon(Canvas* canvas, int x, int y) {
+    canvas_draw_circle(canvas, x + 3, y + 3, 3);
+    canvas_draw_line(canvas, x, y + 3, x + 6, y + 3);
+    canvas_draw_dot(canvas, x + 3, y + 3);
+}
+
+/* Small shard: a diamond. */
+static void draw_shard_icon(Canvas* canvas, int x, int y) {
+    canvas_draw_line(canvas, x + 3, y, x + 6, y + 3);
+    canvas_draw_line(canvas, x + 6, y + 3, x + 3, y + 6);
+    canvas_draw_line(canvas, x + 3, y + 6, x, y + 3);
+    canvas_draw_line(canvas, x, y + 3, x + 3, y);
+    canvas_draw_line(canvas, x + 3, y + 2, x + 3, y + 4);
+}
+
 static void draw_collect(App* app, Canvas* canvas) {
-    char right[24];
-    snprintf(right, sizeof(right), "Shards %lu", (unsigned long)inventory_shard_total(&app->save.inv));
     const char* title = "Idle";
     switch(scanner_phase(app->scanner)) {
     case ScanPhaseWifi:
-        title = "WiFi scan";
+        title = "WiFi";
         break;
     case ScanPhaseBt:
-        title = "BT scan";
+        title = "BT";
         break;
     default:
         break;
     }
-    draw_title(canvas, title, right);
+    draw_title(canvas, title, NULL);
+
+    /* Header counters: echoids spotted and shards collected this outing. */
+    char num[8];
+    canvas_set_font(canvas, FontSecondary);
+    snprintf(num, sizeof(num), "%u", app->shards_this_run);
+    int x = 127 - (int)canvas_string_width(canvas, num);
+    canvas_draw_str(canvas, x, 10, num);
+    x -= 9;
+    draw_shard_icon(canvas, x, 3);
+    x -= 6;
+    snprintf(num, sizeof(num), "%u", app->spotted_count);
+    x -= (int)canvas_string_width(canvas, num);
+    canvas_draw_str(canvas, x, 10, num);
+    x -= 9;
+    draw_ball_icon(canvas, x, 3);
 
     if(app->nearby_count == 0) {
         const char* err = scanner_error(app->scanner);
@@ -602,6 +637,9 @@ static const char* const help_lines[] = {
     "HP regenerates slowly, or",
     "use a Tonic from the Bag.",
     "* owned  x already fought",
+    "Top right: echoids spotted",
+    "(ball) and shards found",
+    "(diamond) since app start.",
     "",
     "BOARD NOT WORKING?",
     "Settings > Board setup >",
@@ -1180,6 +1218,17 @@ static void handle_ap(App* app, const ScanEvent* ev) {
     strncpy(n->ssid, ev->name[0] ? ev->name : "<hidden>", NAME_LEN - 1);
     n->ssid[NAME_LEN - 1] = '\0';
     n->state = app_owns(app, ev->mac) ? NearbyOwned : NearbyWild;
+
+    /* Count each echoid once per outing, even if its list slot was recycled. */
+    uint32_t h = echo_hash_mac(ev->mac);
+    bool counted = false;
+    uint16_t known = app->spotted_count < SPOTTED_MAX ? app->spotted_count : SPOTTED_MAX;
+    for(uint16_t i = 0; i < known && !counted; i++)
+        counted = app->spotted[i] == h;
+    if(!counted) {
+        if(app->spotted_count < SPOTTED_MAX) app->spotted[app->spotted_count] = h;
+        if(app->spotted_count < UINT16_MAX) app->spotted_count++;
+    }
     if(n->state == NearbyWild) notification_message(app->notif, &sequence_blink_green_10);
 }
 
@@ -1196,6 +1245,7 @@ static void handle_bt(App* app, const ScanEvent* ev) {
     Shard s = shard_from_mac(ev->mac);
     if(sv->inv.shards[s.type][s.tier] < 9999) sv->inv.shards[s.type][s.tier]++;
     sv->shards_found++;
+    if(app->shards_this_run < UINT16_MAX) app->shards_this_run++;
     app->dirty = true;
 
     char msg[40];
@@ -1509,6 +1559,8 @@ static void handle_input(App* app, InputEvent* ev) {
                     app->nearby_count = 0;
                     app->nearby_idx = 0;
                     app->nearby_scroll = 0;
+                    app->spotted_count = 0;
+                    app->shards_this_run = 0;
                     app_save(app);
                     app->screen = ScreenIntro;
                 }
