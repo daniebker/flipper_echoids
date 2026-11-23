@@ -199,42 +199,32 @@ static void test_format_duration(void) {
 }
 
 static void test_roster(void) {
+    /* Legacy (v4/v5) conversion: lead plus the first five others form the team */
     Echoid all[10];
     memset(all, 0, sizeof(all));
     for(int i = 0; i < 10; i++)
         all[i].mac[5] = (uint8_t)i;
-    uint8_t lead = 7, idx[MAX_OWNED];
-
-    /* Old save: lead plus the first five others go in the team */
+    uint8_t lead = 7, idx[10];
     roster_normalize(all, 10, &lead, true);
     CHECK(roster_party_count(all, 10) == PARTY_MAX);
-    CHECK(all[7].flags & ECHO_FLAG_PARTY);
     CHECK(roster_list(all, 10, true, idx) == 6 && idx[0] == 0 && idx[5] == 7);
     CHECK(roster_list(all, 10, false, idx) == 4 && idx[0] == 5);
 
-    /* Full team refuses another; swap works and hands over the lead */
-    CHECK(!roster_to_party(all, 10, 5));
-    CHECK(roster_swap(all, 10, &lead, 5, 7));
-    CHECK(lead == 5 && (all[5].flags & ECHO_FLAG_PARTY) && !(all[7].flags & ECHO_FLAG_PARTY));
-    CHECK(!roster_swap(all, 10, &lead, 5, 0)); /* 5 is no longer in the PAC */
-
-    /* Sending the lead to the PAC picks the next team member as lead */
-    CHECK(roster_to_pac(all, 10, &lead, 5));
-    CHECK(lead == 0 && roster_party_count(all, 10) == 5);
-    CHECK(roster_to_party(all, 10, 9));
-    CHECK(roster_party_count(all, 10) == 6);
-
-    /* A normal load must not pull PAC echoids into a short team */
-    CHECK(roster_to_pac(all, 10, &lead, 1));
-    roster_normalize(all, 10, &lead, false);
-    CHECK(roster_party_count(all, 10) == 5);
-
-    /* The last team member can't leave */
-    Echoid one[2];
-    memset(one, 0, sizeof(one));
-    uint8_t l1 = 0;
-    roster_normalize(one, 1, &l1, true);
-    CHECK(!roster_to_pac(one, 1, &l1, 0));
+    /* Removing team members keeps the lead pointing at the same echoid */
+    Echoid team[PARTY_MAX];
+    for(int i = 0; i < PARTY_MAX; i++)
+        team[i].mac[5] = (uint8_t)(10 + i);
+    uint8_t count = PARTY_MAX, l = 3;
+    Echoid out;
+    CHECK(team_remove(team, &count, &l, 1, &out));
+    CHECK(out.mac[5] == 11 && count == 5 && l == 2 && team[l].mac[5] == 13);
+    CHECK(team_remove(team, &count, &l, 4, NULL)); /* after the lead: lead unchanged */
+    CHECK(l == 2 && team[l].mac[5] == 13);
+    CHECK(team_remove(team, &count, &l, 2, NULL)); /* the lead itself: first becomes lead */
+    CHECK(l == 0 && count == 3);
+    CHECK(team_remove(team, &count, &l, 0, NULL));
+    CHECK(team_remove(team, &count, &l, 0, NULL));
+    CHECK(count == 1 && !team_remove(team, &count, &l, 0, NULL)); /* never empty */
 }
 
 static void test_pac_recipe(void) {
@@ -253,7 +243,6 @@ static void test_pac_recipe(void) {
     CHECK(inventory_shard_total(&inv) == 0);
     /* a PAC is not a bag item */
     CHECK(memcmp(inv.items, before.items, sizeof(inv.items)) == 0);
-    CHECK(MAX_OWNED == PARTY_MAX + PAC_SIZE * PAC_MAX && MAX_OWNED < 256);
 }
 
 static void test_type_chart(void) {

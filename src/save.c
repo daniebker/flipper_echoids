@@ -1,13 +1,16 @@
 #include "save.h"
+#include "pac_store.h"
 
 #include <furi.h>
 #include <furi_hal_rtc.h>
 #include <storage/storage.h>
 #include <string.h>
 
-#define SAVE_PATH APP_DATA_PATH("save.bin")
+#define SAVE_PATH        APP_DATA_PATH("save.bin")
+#define SAVE_BACKUP_PATH APP_DATA_PATH("save_old_version.bin")
 
 /* ---- Save versions 1-4: a fixed table of 40 echoids, no PACs to craft ---- */
+/* ---- Save version 5: one table of up to 106 echoids, flags mark the team ---- */
 
 #define LEGACY_MAX 40
 #define LEGACY_PACS 4 /* 6 + 4 * 10 >= 40: old players keep the room they had */
@@ -73,10 +76,41 @@ static bool legacy_upgrade(SaveDataV4* old, size_t read) {
     return true;
 }
 
-static void legacy_convert(const SaveDataV4* old, SaveData* data) {
+#define V5_MAX 106
+
+typedef struct {
+    uint32_t magic;
+    uint32_t version;
+    uint8_t team_count;
+    uint8_t lead;
+    uint8_t source;
+    uint8_t uart;
+    uint8_t bt_enabled;
+    uint8_t pacs;
+    uint8_t reserved[2];
+    uint8_t baud_idx;
+    uint8_t power;
+    uint8_t boot_idx;
+    uint8_t eol;
+    uint8_t wifi_cmd;
+    uint8_t bt_cmd;
+    uint8_t log_sd;
+    uint8_t reserved2[9];
+    Inventory inv;
+    uint32_t captures;
+    uint32_t wins;
+    uint32_t shards_found;
+    uint32_t seen_bt[SEEN_BT_MAX];
+    uint32_t seen_bt_time[SEEN_BT_MAX];
+    uint16_t seen_bt_count;
+    uint16_t reserved3;
+    Echoid team[V5_MAX];
+} SaveDataV5;
+
+static void v4_to_v5(const SaveDataV4* old, SaveDataV5* data) {
     memset(data, 0, sizeof(*data));
     data->magic = SAVE_MAGIC;
-    data->version = SAVE_VERSION;
+    data->version = 5;
     data->team_count = old->team_count;
     data->lead = old->lead;
     data->source = old->source;
@@ -100,6 +134,53 @@ static void legacy_convert(const SaveDataV4* old, SaveData* data) {
     memcpy(data->team, old->team, sizeof(Echoid) * old->team_count);
 }
 
+/* v5 -> v6: team members stay in the save, the rest are written to pac.bin. */
+static bool v5_to_v6(SaveDataV5* old, SaveData* data) {
+    if(old->team_count == 0 || old->team_count > V5_MAX) return false;
+    if(old->lead >= old->team_count) old->lead = 0;
+    roster_normalize(old->team, old->team_count, &old->lead, false);
+
+    memset(data, 0, sizeof(*data));
+    data->magic = SAVE_MAGIC;
+    data->version = SAVE_VERSION;
+    data->source = old->source;
+    data->uart = old->uart;
+    data->bt_enabled = old->bt_enabled;
+    data->baud_idx = old->baud_idx;
+    data->power = old->power;
+    data->boot_idx = old->boot_idx;
+    data->eol = old->eol;
+    data->wifi_cmd = old->wifi_cmd;
+    data->bt_cmd = old->bt_cmd;
+    data->log_sd = old->log_sd;
+    data->pacs = old->pacs ? old->pacs : 1;
+    data->inv = old->inv;
+    data->captures = old->captures;
+    data->wins = old->wins;
+    data->shards_found = old->shards_found;
+    memcpy(data->seen_bt, old->seen_bt, sizeof(data->seen_bt));
+    memcpy(data->seen_bt_time, old->seen_bt_time, sizeof(data->seen_bt_time));
+    data->seen_bt_count = old->seen_bt_count;
+
+    pac_clear();
+    for(uint8_t i = 0; i < old->team_count; i++) {
+        Echoid e = old->team[i];
+        bool in_team = (e.flags & ECHO_FLAG_PARTY) != 0;
+        e.flags = 0;
+        if(in_team && data->team_count < PARTY_MAX) {
+            if(i == old->lead) data->lead = data->team_count;
+            data->team[data->team_count++] = e;
+        } else {
+            if(!pac_append(&e)) return false;
+            data->pac_count++;
+        }
+    }
+    /* Never shrink the room the player already had. */
+    while(save_pac_capacity(data) < data->pac_count)
+        data->pacs++;
+    return data->team_count > 0;
+}
+
 /* ---------------------------------------------------------------------------- */
 
 static size_t read_save(void* buf, size_t size) {
@@ -117,29 +198,50 @@ static size_t read_save(void* buf, size_t size) {
 
 bool save_load(SaveData* data) {
     bool ok = false;
+    bool upgraded = false;
     memset(data, 0, sizeof(SaveData));
     size_t read = read_save(data, sizeof(SaveData));
     if(read < 8 || data->magic != SAVE_MAGIC) return false;
 
     if(data->version == SAVE_VERSION) {
         ok = read == sizeof(SaveData);
-    } else {
-        /* Old layout: read it again into the legacy struct and convert. */
-        SaveDataV4* old = malloc(sizeof(SaveDataV4));
-        memset(old, 0, sizeof(SaveDataV4));
-        size_t old_read = read_save(old, sizeof(SaveDataV4));
-        ok = legacy_upgrade(old, old_read);
-        if(ok) legacy_convert(old, data);
-        free(old);
+    } else if(data->version >= 1 && data->version <= 5) {
+        /* Keep a copy of the old file first: if anything goes wrong below,
+         * the player's progress is still on the card. */
+        Storage* storage = furi_record_open(RECORD_STORAGE);
+        storage_simply_remove(storage, SAVE_BACKUP_PATH);
+        storage_common_copy(storage, SAVE_PATH, SAVE_BACKUP_PATH);
+        furi_record_close(RECORD_STORAGE);
+        /* Old layout: read it again into the legacy structs and convert. */
+        SaveDataV5* v5 = malloc(sizeof(SaveDataV5));
+        memset(v5, 0, sizeof(SaveDataV5));
+        if(data->version == 5) {
+            ok = read_save(v5, sizeof(SaveDataV5)) == sizeof(SaveDataV5);
+        } else {
+            SaveDataV4* v4 = malloc(sizeof(SaveDataV4));
+            memset(v4, 0, sizeof(SaveDataV4));
+            size_t old_read = read_save(v4, sizeof(SaveDataV4));
+            ok = legacy_upgrade(v4, old_read);
+            if(ok) v4_to_v5(v4, v5);
+            free(v4);
+        }
+        if(ok) ok = v5_to_v6(v5, data);
+        free(v5);
+        upgraded = ok;
     }
-
-    if(ok && (data->team_count == 0 || data->team_count > MAX_OWNED)) ok = false;
     if(!ok) return false;
-    if(data->pacs < 1) data->pacs = 1;
-    if(data->pacs > PAC_MAX) data->pacs = PAC_MAX;
+
+    if(data->team_count == 0 || data->team_count > PARTY_MAX) return false;
     if(data->lead >= data->team_count) data->lead = 0;
-    roster_normalize(data->team, data->team_count, &data->lead, false);
+    for(uint8_t i = 0; i < data->team_count; i++)
+        data->team[i].flags = 0;
+    if(data->pacs < 1) data->pacs = 1;
+    /* Trust the PAC file over the saved count if they disagree. */
+    uint32_t stored = pac_file_count();
+    if(data->pac_count > stored) data->pac_count = stored;
     if(data->seen_bt_count > SEEN_BT_MAX) data->seen_bt_count = SEEN_BT_MAX;
+    /* Store the converted save right away, so the PAC file isn't rebuilt again. */
+    if(upgraded) save_store(data);
     return true;
 }
 
@@ -160,4 +262,5 @@ void save_delete(void) {
     Storage* storage = furi_record_open(RECORD_STORAGE);
     storage_simply_remove(storage, SAVE_PATH);
     furi_record_close(RECORD_STORAGE);
+    pac_clear();
 }

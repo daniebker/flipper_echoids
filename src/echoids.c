@@ -16,6 +16,7 @@
 #include <string.h>
 
 #include "game.h"
+#include "pac_store.h"
 #include "save.h"
 #include "scanner.h"
 
@@ -95,13 +96,21 @@ typedef struct {
     uint8_t team_tab;
     uint8_t team_idx;
     uint8_t team_scroll;
-    uint8_t pac_idx;
-    uint8_t pac_scroll;
+    uint32_t pac_idx;
+    uint32_t pac_scroll;
     bool detail_menu; /* actions popup open on the detail screen */
     uint8_t detail_menu_idx;
-    uint8_t swap_from; /* array index of the PAC echoid joining the team */
-    uint8_t swap_idx;
+    uint8_t swap_idx; /* team member to swap out for the PAC echoid at pac_idx */
     uint8_t swap_scroll;
+
+    /* PAC echoids live on the SD card: the visible page and the one being
+     * viewed are cached here and refreshed from the main loop, never from
+     * the draw callback. */
+    Echoid pac_page[TEAM_ROWS];
+    uint8_t pac_page_n;
+    uint32_t pac_page_start;
+    bool pac_page_valid;
+    Echoid pac_view;
     uint8_t craft_idx;
     uint8_t craft_scroll;
     uint8_t bag_tab;
@@ -159,23 +168,34 @@ static Echoid* app_lead(App* app) {
     return &app->save.team[app->save.lead];
 }
 
+/* In the team or stored in the PAC (the PAC check reads the SD card). */
 static bool app_owns(App* app, const uint8_t mac[6]) {
     for(uint8_t i = 0; i < app->save.team_count; i++) {
         if(memcmp(app->save.team[i].mac, mac, 6) == 0) return true;
     }
-    return false;
+    return pac_find(mac, app->save.pac_count) != PAC_NOT_FOUND;
 }
 
 /* Array indexes of the team (party=true) or the PAC. */
-static uint8_t app_roster(App* app, bool party, uint8_t* out) {
-    return roster_list(app->save.team, app->save.team_count, party, out);
+static void pac_invalidate(App* app) {
+    app->pac_page_valid = false;
 }
 
-/* Position of an array index within a roster list (0 if absent). */
-static uint8_t roster_pos(const uint8_t* list, uint8_t n, uint8_t idx) {
-    for(uint8_t i = 0; i < n; i++)
-        if(list[i] == idx) return i;
-    return 0;
+/* Loads the visible PAC page if the scroll position changed. Main loop only. */
+static void pac_refresh(App* app) {
+    if(app->pac_page_valid && app->pac_page_start == app->pac_scroll) return;
+    app->pac_page_start = app->pac_scroll;
+    app->pac_page_n = 0;
+    if(app->pac_scroll < app->save.pac_count) {
+        uint32_t left = app->save.pac_count - app->pac_scroll;
+        uint8_t want = left < TEAM_ROWS ? (uint8_t)left : TEAM_ROWS;
+        app->pac_page_n = pac_read_page(app->pac_scroll, app->pac_page, want);
+    }
+    app->pac_page_valid = true;
+}
+
+static bool pac_has_room(App* app) {
+    return app->save.pac_count < save_pac_capacity(&app->save);
 }
 
 static void app_new_game(App* app) {
@@ -218,8 +238,10 @@ static void app_new_game(App* app) {
     const uint8_t* mac = furi_hal_version_get_ble_mac();
     const char* name = furi_hal_version_get_name_ptr();
     echo_init(&app->save.team[0], mac, 1, name ? name : "Flipper");
-    app->save.team[0].flags = ECHO_FLAG_PARTY;
-    app->save.pacs = 1; /* room for PARTY_MAX + PAC_SIZE echoids to start */
+    app->save.pacs = 1; /* room for PAC_SIZE echoids in storage to start */
+    app->save.pac_count = 0;
+    pac_clear();
+    app->pac_page_valid = false;
     app->save.team_count = 1;
     app->save.lead = 0;
     app->dirty = true;
@@ -583,34 +605,35 @@ static void draw_ball_pick(App* app, Canvas* canvas) {
     }
 }
 
-/* Draws a list of echoids given by array index. */
+/* Draws a list of echoids. rows[] are the visible ones, starting at scroll. */
 static void draw_roster(
     App* app,
     Canvas* canvas,
     const char* title,
     const char* right,
-    const uint8_t* list,
-    uint8_t n,
-    uint8_t sel,
-    uint8_t scroll) {
+    const Echoid* rows,
+    uint8_t nrows,
+    uint32_t total,
+    uint32_t sel,
+    uint32_t scroll,
+    int32_t lead_pos) {
+    UNUSED(app);
     char buf[32];
     draw_title(canvas, title, right);
-    if(n == 0) {
+    if(total == 0) {
         canvas_draw_str_aligned(canvas, 64, 34, AlignCenter, AlignCenter, "Empty");
         return;
     }
-    for(uint8_t row = 0; row < TEAM_ROWS; row++) {
-        uint8_t pos = scroll + row;
-        if(pos >= n) break;
-        uint8_t i = list[pos];
-        Echoid* e = &app->save.team[i];
+    for(uint8_t row = 0; row < nrows && row < TEAM_ROWS; row++) {
+        uint32_t pos = scroll + row;
+        const Echoid* e = &rows[row];
         EchoGenes g;
         echo_genes(e->mac, &g);
         EchoStats s;
         echo_stats(e, &s);
         int y = 22 + row * 10;
         draw_row(canvas, y, pos == sel);
-        snprintf(buf, sizeof(buf), "%s%s", i == app->save.lead ? ">" : " ", echo_species_name(e->mac));
+        snprintf(buf, sizeof(buf), "%s%s", (int32_t)pos == lead_pos ? ">" : " ", echo_species_name(e->mac));
         canvas_draw_str(canvas, 2, y, buf);
         snprintf(buf, sizeof(buf), "L%u", e->level);
         canvas_draw_str(canvas, 62, y, buf);
@@ -624,68 +647,82 @@ static void draw_roster(
         }
     }
     canvas_set_color(canvas, ColorBlack);
-    if(n > TEAM_ROWS) {
-        elements_scrollbar_pos(canvas, 127, 14, 48, sel, n);
+    if(total > TEAM_ROWS) {
+        elements_scrollbar_pos(canvas, 127, 14, 48, sel, total);
     }
 }
 
+/* The team as a roster list. */
+static void draw_team_roster(App* app, Canvas* canvas, const char* title, const char* right, uint8_t sel, uint8_t scroll) {
+    uint8_t n = app->save.team_count > scroll ? app->save.team_count - scroll : 0;
+    draw_roster(
+        app, canvas, title, right, &app->save.team[scroll], n, app->save.team_count, sel, scroll, app->save.lead);
+}
+
 static void draw_team(App* app, Canvas* canvas) {
-    uint8_t list[MAX_OWNED];
-    char buf[16];
+    char buf[24];
     if(app->team_tab == 0) {
-        uint8_t n = app_roster(app, true, list);
-        snprintf(buf, sizeof(buf), "%u/%u  <>", n, PARTY_MAX);
-        draw_roster(app, canvas, "Team", buf, list, n, app->team_idx, app->team_scroll);
+        snprintf(buf, sizeof(buf), "%u/%u  <>", app->save.team_count, PARTY_MAX);
+        draw_team_roster(app, canvas, "Team", buf, app->team_idx, app->team_scroll);
     } else {
-        uint8_t party = roster_party_count(app->save.team, app->save.team_count);
-        uint8_t n = app_roster(app, false, list);
-        snprintf(buf, sizeof(buf), "%u/%u  <>", n, save_capacity(&app->save) - party);
-        draw_roster(app, canvas, "PAC", buf, list, n, app->pac_idx, app->pac_scroll);
+        snprintf(
+            buf,
+            sizeof(buf),
+            "%lu/%lu  <>",
+            (unsigned long)app->save.pac_count,
+            (unsigned long)save_pac_capacity(&app->save));
+        draw_roster(
+            app,
+            canvas,
+            "PAC",
+            buf,
+            app->pac_page,
+            app->pac_page_valid ? app->pac_page_n : 0,
+            app->save.pac_count,
+            app->pac_idx,
+            app->pac_scroll,
+            -1);
     }
     draw_toast(app, canvas);
 }
 
 static void draw_swap(App* app, Canvas* canvas) {
-    uint8_t list[MAX_OWNED];
-    uint8_t n = app_roster(app, true, list);
-    draw_roster(app, canvas, "Swap out who?", NULL, list, n, app->swap_idx, app->swap_scroll);
+    draw_team_roster(app, canvas, "Swap out who?", NULL, app->swap_idx, app->swap_scroll);
     draw_toast(app, canvas);
 }
 
 static void draw_use_on(App* app, Canvas* canvas) {
     char buf[16];
     snprintf(buf, sizeof(buf), "x%u", app->save.inv.items[app->use_item_id]);
-    uint8_t list[MAX_OWNED];
-    uint8_t n = app_roster(app, true, list);
-    draw_roster(
+    draw_team_roster(
         app,
         canvas,
         app->use_item_id == ItemTonic ? "Heal who?" : "Crystal on?",
         buf,
-        list,
-        n,
         app->use_idx,
         app->use_scroll);
     draw_toast(app, canvas);
 }
 
-/* The echoid shown on the detail screen: array index, its position and list size. */
-static uint8_t detail_target(App* app, uint8_t* pos, uint8_t* n) {
-    uint8_t list[MAX_OWNED];
-    *n = app_roster(app, app->team_tab == 0, list);
-    *pos = app->team_tab == 0 ? app->team_idx : app->pac_idx;
-    if(*n == 0) return 0;
-    if(*pos >= *n) *pos = *n - 1;
-    return list[*pos];
+/* The echoid on the detail screen, its position and the list size. */
+static const Echoid* detail_target(App* app, uint32_t* pos, uint32_t* n) {
+    if(app->team_tab == 0) {
+        *n = app->save.team_count;
+        *pos = app->team_idx < *n ? app->team_idx : 0;
+        return &app->save.team[*pos];
+    }
+    *n = app->save.pac_count;
+    *pos = app->pac_idx;
+    return &app->pac_view;
 }
 
 static const char* const detail_team_actions[] = {"Set as lead", "Send to PAC"};
 static const char* const detail_pac_actions[] = {"Move to team"};
 
 static void draw_detail(App* app, Canvas* canvas) {
-    uint8_t pos, n;
-    uint8_t idx = detail_target(app, &pos, &n);
-    Echoid* e = &app->save.team[idx];
+    uint32_t pos, n;
+    const Echoid* e = detail_target(app, &pos, &n);
+    bool is_lead = app->team_tab == 0 && pos == app->save.lead;
     EchoGenes g;
     echo_genes(e->mac, &g);
     EchoStats s;
@@ -698,11 +735,11 @@ static void draw_detail(App* app, Canvas* canvas) {
     snprintf(
         buf,
         sizeof(buf),
-        "%s%s %u/%u",
-        idx == app->save.lead ? "LEAD " : "",
+        "%s%s %lu/%lu",
+        is_lead ? "LEAD " : "",
         app->team_tab == 0 ? "Team" : "PAC",
-        pos + 1,
-        n);
+        (unsigned long)(pos + 1),
+        (unsigned long)n);
     canvas_draw_str_aligned(canvas, 127, 9, AlignRight, AlignBottom, buf);
 
     draw_sprite(canvas, e->mac, 0, 12, 2);
@@ -746,7 +783,6 @@ static bool recipe_is_pac(size_t i) {
 
 /* Craftable now: enough shards, and for a PAC, not already at the limit. */
 static bool app_can_craft(App* app, size_t i) {
-    if(recipe_is_pac(i) && app->save.pacs >= PAC_MAX) return false;
     return craft_can(&app->save.inv, i);
 }
 
@@ -763,7 +799,7 @@ static void draw_craft(App* app, Canvas* canvas) {
         snprintf(buf, sizeof(buf), "%s%s", app_can_craft(app, i) ? "+" : " ", r->name);
         canvas_draw_str(canvas, 2, y, buf);
         if(recipe_is_pac(i))
-            snprintf(buf, sizeof(buf), "%u/%u", app->save.pacs, PAC_MAX);
+            snprintf(buf, sizeof(buf), "have %lu", (unsigned long)app->save.pacs);
         else
             snprintf(buf, sizeof(buf), "have %u", app->save.inv.items[r->out]);
         canvas_draw_str_aligned(canvas, 121, y, AlignRight, AlignBottom, buf);
@@ -772,10 +808,7 @@ static void draw_craft(App* app, Canvas* canvas) {
     canvas_draw_line(canvas, 0, 46, 127, 46);
     canvas_draw_str(canvas, 2, 55, recipes[app->craft_idx].recipe);
     const char* status = "OK: craft";
-    if(recipe_is_pac(app->craft_idx) && app->save.pacs >= PAC_MAX)
-        status = "Max PACs reached";
-    else if(!craft_can(&app->save.inv, app->craft_idx))
-        status = "Not enough shards";
+    if(!craft_can(&app->save.inv, app->craft_idx)) status = "Not enough shards";
     canvas_draw_str(canvas, 2, 63, status);
     elements_scrollbar_pos(canvas, 127, 14, 31, app->craft_idx, recipe_count);
     draw_toast(app, canvas);
@@ -865,7 +898,9 @@ static const char* const help_lines[] = {
     "Team holds 6 echoids; new",
     "catches beyond that go to",
     "the PAC. Team <> PAC tabs.",
-    "Craft PACs for +10 room.",
+    "Craft PACs for +10 room,",
+    "as many as you like. The",
+    "PAC heals echoids.",
     "",
     "Win or catch to gain XP.",
     "HP regenerates slowly, or",
@@ -1578,11 +1613,15 @@ static void battle_after_action(App* app) {
         SaveData* sv = &app->save;
         Echoid caught = b->wild;
         if(caught.hp == 0) caught.hp = 1;
-        if(sv->team_count < save_capacity(sv)) {
-            bool to_team = roster_party_count(sv->team, sv->team_count) < PARTY_MAX;
-            caught.flags = to_team ? ECHO_FLAG_PARTY : 0;
+        caught.flags = 0;
+        if(sv->team_count < PARTY_MAX) {
             sv->team[sv->team_count++] = caught;
-            if(!to_team) battle_log_line(b, "Team full: sent to PAC");
+        } else if(pac_has_room(app) && pac_append(&caught)) {
+            sv->pac_count++;
+            pac_invalidate(app);
+            battle_log_line(b, "Team full: sent to PAC");
+        } else {
+            battle_log_line(b, "Couldn't store it!");
         }
         sv->captures++;
         if(n) n->state = NearbyOwned;
@@ -1666,24 +1705,98 @@ static bool use_item_on(App* app, uint8_t item, Echoid* target) {
 /* Input                                                                     */
 /* ------------------------------------------------------------------------- */
 
-/* Opens the Team screen on a tab, selecting the given array index. */
-static void team_open(App* app, uint8_t tab, uint8_t select) {
-    uint8_t list[MAX_OWNED];
-    uint8_t n = app_roster(app, tab == 0, list);
-    uint8_t* idx = tab == 0 ? &app->team_idx : &app->pac_idx;
-    uint8_t* scroll = tab == 0 ? &app->team_scroll : &app->pac_scroll;
+/* 32-bit list navigation for the PAC, which can hold any number of echoids. */
+static void list_move32(uint32_t* idx, uint32_t* scroll, uint32_t count, uint32_t rows, int delta) {
+    if(count == 0) {
+        *idx = 0;
+        *scroll = 0;
+        return;
+    }
+    if(delta < 0)
+        *idx = *idx == 0 ? count - 1 : *idx - 1;
+    else if(delta > 0)
+        *idx = *idx + 1 >= count ? 0 : *idx + 1;
+    if(*idx >= count) *idx = count - 1;
+    if(*idx < *scroll) *scroll = *idx;
+    if(*idx >= *scroll + rows) *scroll = *idx - rows + 1;
+    if(*scroll >= count) *scroll = 0;
+}
+
+static void pac_view_load(App* app) {
+    if(app->save.pac_count == 0 || !pac_read(app->pac_idx, &app->pac_view))
+        memset(&app->pac_view, 0, sizeof(app->pac_view));
+}
+
+/* Opens the Team screen on a tab with the given position selected. */
+static void team_open(App* app, uint8_t tab, uint32_t select) {
     app->team_tab = tab;
-    *idx = roster_pos(list, n, select);
-    *scroll = 0;
-    list_move(idx, scroll, n, TEAM_ROWS, 0);
+    if(tab == 0) {
+        app->team_idx = (uint8_t)select;
+        app->team_scroll = 0;
+        list_move(&app->team_idx, &app->team_scroll, app->save.team_count, TEAM_ROWS, 0);
+    } else {
+        app->pac_idx = select;
+        app->pac_scroll = 0;
+        list_move32(&app->pac_idx, &app->pac_scroll, app->save.pac_count, TEAM_ROWS, 0);
+        pac_invalidate(app);
+        pac_refresh(app);
+    }
     app->detail_menu = false;
     app->screen = ScreenTeam;
 }
 
+/* Team member -> end of the PAC. */
+static void team_send_to_pac(App* app, uint8_t idx) {
+    char msg[40];
+    const char* name = echo_species_name(app->save.team[idx].mac);
+    if(app->save.team_count <= 1) {
+        app_toast(app, "Team needs one echoid");
+        return;
+    }
+    if(!pac_has_room(app)) {
+        app_toast(app, "PAC full: craft a PAC");
+        return;
+    }
+    Echoid e = app->save.team[idx];
+    e.flags = 0;
+    if(!pac_append(&e)) {
+        app_toast(app, "SD card write failed");
+        return;
+    }
+    snprintf(msg, sizeof(msg), "%s sent to PAC", name);
+    team_remove(app->save.team, &app->save.team_count, &app->save.lead, idx, NULL);
+    app->save.pac_count++;
+    pac_invalidate(app);
+    app_save(app); /* keep save.bin in step with pac.bin */
+    team_open(app, 0, app->save.lead);
+    app_toast(app, msg);
+}
+
+/* PAC echoid (pac_view at pac_idx) -> team. Echoids leave the PAC fully healed. */
+static void pac_send_to_team(App* app) {
+    char msg[40];
+    Echoid e = app->pac_view;
+    EchoStats st;
+    echo_stats(&e, &st);
+    e.hp = st.max_hp;
+    e.flags = 0;
+    if(!pac_remove(app->pac_idx, app->save.pac_count)) {
+        app_toast(app, "SD card write failed");
+        return;
+    }
+    app->save.pac_count--;
+    app->save.team[app->save.team_count++] = e;
+    pac_invalidate(app);
+    app_save(app);
+    snprintf(msg, sizeof(msg), "%s joined the team", echo_species_name(e.mac));
+    team_open(app, 0, app->save.team_count - 1);
+    app_toast(app, msg);
+}
+
 static void detail_input(App* app, InputEvent* ev, bool press, int dy) {
-    uint8_t pos, n;
-    uint8_t target = detail_target(app, &pos, &n);
-    const char* name = echo_species_name(app->save.team[target].mac);
+    uint32_t pos, n;
+    const Echoid* target = detail_target(app, &pos, &n);
+    const char* name = echo_species_name(target->mac);
     char msg[40];
 
     if(app->detail_menu) {
@@ -1696,46 +1809,37 @@ static void detail_input(App* app, InputEvent* ev, bool press, int dy) {
             app->detail_menu = false;
             if(app->team_tab == 0 && app->detail_menu_idx == 0) {
                 /* Set as lead */
-                if(app->save.lead != target) {
-                    app->save.lead = target;
+                if(app->save.lead != pos) {
+                    app->save.lead = (uint8_t)pos;
                     app->dirty = true;
                     snprintf(msg, sizeof(msg), "%s is now lead", name);
                     app_toast(app, msg);
                     notification_message(app->notif, &sequence_blink_green_10);
                 }
             } else if(app->team_tab == 0) {
-                /* Send to PAC */
-                if(roster_to_pac(app->save.team, app->save.team_count, &app->save.lead, target)) {
-                    app->dirty = true;
-                    snprintf(msg, sizeof(msg), "%s sent to PAC", name);
-                    team_open(app, 0, app->save.lead);
-                    app_toast(app, msg);
-                } else {
-                    app_toast(app, "Team needs one echoid");
-                }
+                team_send_to_pac(app, (uint8_t)pos);
+            } else if(app->save.team_count < PARTY_MAX) {
+                pac_send_to_team(app);
             } else {
-                /* Move to team, or choose who to swap out if it's full */
-                if(roster_to_party(app->save.team, app->save.team_count, target)) {
-                    app->dirty = true;
-                    snprintf(msg, sizeof(msg), "%s joined the team", name);
-                    team_open(app, 0, target);
-                    app_toast(app, msg);
-                } else {
-                    app->swap_from = target;
-                    app->swap_idx = 0;
-                    app->swap_scroll = 0;
-                    app->screen = ScreenSwap;
-                    app_toast(app, "Team full: pick a swap");
-                }
+                /* Team full: choose who goes into the PAC in its place. */
+                app->swap_idx = 0;
+                app->swap_scroll = 0;
+                app->screen = ScreenSwap;
+                app_toast(app, "Team full: pick a swap");
             }
         }
         return;
     }
 
     if(press && (ev->key == InputKeyLeft || ev->key == InputKeyRight)) {
-        uint8_t* idx = app->team_tab == 0 ? &app->team_idx : &app->pac_idx;
-        uint8_t* scroll = app->team_tab == 0 ? &app->team_scroll : &app->pac_scroll;
-        list_move(idx, scroll, n, TEAM_ROWS, ev->key == InputKeyLeft ? -1 : 1);
+        int d = ev->key == InputKeyLeft ? -1 : 1;
+        if(app->team_tab == 0) {
+            list_move(&app->team_idx, &app->team_scroll, app->save.team_count, TEAM_ROWS, d);
+        } else {
+            list_move32(&app->pac_idx, &app->pac_scroll, app->save.pac_count, TEAM_ROWS, d);
+            pac_view_load(app);
+            pac_refresh(app);
+        }
     } else if(press && ev->key == InputKeyOk) {
         app->detail_menu = true;
         app->detail_menu_idx = 0;
@@ -1813,7 +1917,7 @@ static void handle_input(App* app, InputEvent* ev) {
                 battle_attack(&app->battle, true);
                 break;
             case 2:
-                if(app->save.team_count >= save_capacity(&app->save)) {
+                if(app->save.team_count >= PARTY_MAX && !pac_has_room(app)) {
                     battle_log_line(&app->battle, "No room: craft a PAC!");
                 } else {
                     app->screen = ScreenBallPick;
@@ -1841,15 +1945,24 @@ static void handle_input(App* app, InputEvent* ev) {
         break;
 
     case ScreenTeam: {
-        uint8_t list[MAX_OWNED];
-        uint8_t n = app_roster(app, app->team_tab == 0, list);
-        uint8_t* idx = app->team_tab == 0 ? &app->team_idx : &app->pac_idx;
-        uint8_t* scroll = app->team_tab == 0 ? &app->team_scroll : &app->pac_scroll;
+        bool pac = app->team_tab == 1;
+        uint32_t n = pac ? app->save.pac_count : app->save.team_count;
         if(dy) {
-            list_move(idx, scroll, n, TEAM_ROWS, dy);
+            if(pac) {
+                list_move32(&app->pac_idx, &app->pac_scroll, n, TEAM_ROWS, dy);
+                pac_refresh(app);
+            } else {
+                list_move(&app->team_idx, &app->team_scroll, (uint8_t)n, TEAM_ROWS, dy);
+            }
         } else if(press && (ev->key == InputKeyLeft || ev->key == InputKeyRight)) {
             app->team_tab ^= 1; /* Team <-> PAC */
+            if(app->team_tab == 1) {
+                list_move32(&app->pac_idx, &app->pac_scroll, app->save.pac_count, TEAM_ROWS, 0);
+                pac_invalidate(app);
+                pac_refresh(app);
+            }
         } else if(press && ev->key == InputKeyOk && n > 0) {
+            if(pac) pac_view_load(app);
             app->detail_menu = false;
             app->screen = ScreenDetail;
         } else if(press && ev->key == InputKeyBack) {
@@ -1863,24 +1976,33 @@ static void handle_input(App* app, InputEvent* ev) {
         break;
 
     case ScreenSwap: {
-        uint8_t list[MAX_OWNED];
-        uint8_t n = app_roster(app, true, list);
         if(dy) {
-            list_move(&app->swap_idx, &app->swap_scroll, n, TEAM_ROWS, dy);
-        } else if(press && ev->key == InputKeyOk && app->swap_idx < n) {
-            uint8_t out = list[app->swap_idx];
-            if(roster_swap(app->save.team, app->save.team_count, &app->save.lead, app->swap_from, out)) {
+            list_move(&app->swap_idx, &app->swap_scroll, app->save.team_count, TEAM_ROWS, dy);
+        } else if(press && ev->key == InputKeyOk && app->swap_idx < app->save.team_count) {
+            /* The team member takes the PAC echoid's slot, and vice versa. */
+            Echoid out = app->save.team[app->swap_idx];
+            Echoid in = app->pac_view;
+            EchoStats st;
+            echo_stats(&in, &st);
+            in.hp = st.max_hp; /* echoids leave the PAC fully healed */
+            out.flags = 0;
+            in.flags = 0;
+            if(pac_write(app->pac_idx, &out)) {
+                app->save.team[app->swap_idx] = in;
+                pac_invalidate(app);
+                app_save(app);
                 char msg[40];
                 snprintf(
                     msg,
                     sizeof(msg),
                     "%s <> %s",
-                    echo_species_name(app->save.team[app->swap_from].mac),
-                    echo_species_name(app->save.team[out].mac));
-                app->dirty = true;
+                    echo_species_name(in.mac),
+                    echo_species_name(out.mac));
                 notification_message(app->notif, &sequence_success);
-                team_open(app, 0, app->swap_from);
+                team_open(app, 0, app->swap_idx);
                 app_toast(app, msg);
+            } else {
+                app_toast(app, "SD card write failed");
             }
         } else if(press && ev->key == InputKeyBack) {
             app->screen = ScreenDetail;
@@ -1892,14 +2014,15 @@ static void handle_input(App* app, InputEvent* ev) {
         if(dy) {
             list_move(&app->craft_idx, &app->craft_scroll, recipe_count, CRAFT_ROWS, dy);
         } else if(press && ev->key == InputKeyOk) {
-            if(recipe_is_pac(app->craft_idx) && app->save.pacs >= PAC_MAX) {
-                app_toast(app, "Max PACs reached");
-                notification_message(app->notif, &sequence_error);
-            } else if(craft_do(&app->save.inv, app->craft_idx)) {
+            if(craft_do(&app->save.inv, app->craft_idx)) {
                 char msg[40];
                 if(recipe_is_pac(app->craft_idx)) {
-                    app->save.pacs++;
-                    snprintf(msg, sizeof(msg), "New PAC! Room for %u", save_capacity(&app->save));
+                    if(app->save.pacs < UINT32_MAX / PAC_SIZE) app->save.pacs++;
+                    snprintf(
+                        msg,
+                        sizeof(msg),
+                        "New PAC! Room for %lu",
+                        (unsigned long)save_pac_capacity(&app->save));
                 } else {
                     snprintf(msg, sizeof(msg), "Crafted %s!", recipes[app->craft_idx].name);
                 }
@@ -1929,11 +2052,9 @@ static void handle_input(App* app, InputEvent* ev) {
             } else {
                 /* Choose who to use it on, starting at the lead. */
                 app->use_item_id = item;
-                uint8_t list[MAX_OWNED];
-                uint8_t n = app_roster(app, true, list);
-                app->use_idx = roster_pos(list, n, app->save.lead);
+                app->use_idx = app->save.lead;
                 app->use_scroll = 0;
-                list_move(&app->use_idx, &app->use_scroll, n, TEAM_ROWS, 0);
+                list_move(&app->use_idx, &app->use_scroll, app->save.team_count, TEAM_ROWS, 0);
                 app->toast_until = 0;
                 app->screen = ScreenUseOn;
             }
@@ -1988,14 +2109,12 @@ static void handle_input(App* app, InputEvent* ev) {
         break;
 
     case ScreenUseOn: {
-        uint8_t list[MAX_OWNED];
-        uint8_t n = app_roster(app, true, list);
         if(dy) {
-            list_move(&app->use_idx, &app->use_scroll, n, TEAM_ROWS, dy);
-        } else if(press && ev->key == InputKeyOk && app->use_idx < n) {
+            list_move(&app->use_idx, &app->use_scroll, app->save.team_count, TEAM_ROWS, dy);
+        } else if(press && ev->key == InputKeyOk && app->use_idx < app->save.team_count) {
             /* On success go back to the Bag (the toast shows there); on a
              * refusal (already healthy, max level) stay so another can be picked. */
-            if(use_item_on(app, app->use_item_id, &app->save.team[list[app->use_idx]]))
+            if(use_item_on(app, app->use_item_id, &app->save.team[app->use_idx]))
                 app->screen = ScreenBag;
         } else if(press && ev->key == InputKeyBack) {
             app->screen = ScreenBag;

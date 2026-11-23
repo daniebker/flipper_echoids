@@ -89,7 +89,7 @@ Shards come in 8 elements (the same as the creature types) and three tiers:
 | Prism Ball | 1 Prismatic + 2 Bright | Catch rate ×2.5 |
 | Tonic | 2 Tide + 1 Flora (any tier) | Fully heals the echoid you choose, including a fainted one |
 | Echo Crystal | 5 shards of any kind | Gives the echoid you choose half a level of XP |
-| PAC | 3 Dull + 2 Bright | Room for 10 more echoids in storage (up to 10 PACs) |
+| PAC | 3 Dull + 2 Bright | Room for 10 more echoids in storage (no limit on PACs) |
 
 ### Shard cooldowns
 
@@ -121,14 +121,18 @@ most of. Cheaper tiers are used first.
   battle log says `Team full: sent to PAC`.
 - Storage comes in **PACs** of 10 echoids each, and you craft more in **Craft**
   (3 Dull + 2 Bright shards). You start with one PAC, so you can own 6 + 10 = **16**
-  echoids. Each new PAC adds 10, up to 10 PACs (**106** echoids).
+  echoids. Each new PAC adds 10, and there's **no limit** on how many PACs you craft.
+- PAC echoids are stored on the SD card in `/ext/apps_data/echoids/pac.bin`, so the only
+  real limit is free space on the card (each echoid takes 30 bytes).
 - When the team and every PAC are full you can't throw balls, and the battle log says
   `No room: craft a PAC!`. The PAC tab shows how full your storage is (for example
   `12/20`).
-- Echoids in the PAC still regain HP over time.
-- Saves from before this change keep your lead and the next five echoids in the team. The
-  rest move to the PAC. Saves from before PACs could be crafted get 4 PACs (46 echoids), so
-  you keep at least the 40 you had room for.
+- The PAC heals: an echoid that comes out of the PAC (**Move to team** or a swap) has full HP.
+  Only team members regain HP over time.
+- Older saves are upgraded automatically. A copy of the old file is kept as
+  `save_old_version.bin` in the same folder. Your lead and up to five others stay in the
+  team and the rest move to the PAC file. Saves from before PACs could be crafted get 4 PACs
+  (room for 40 in storage), and you always get enough PACs to hold everything you own.
 
 ### Catching and levelling
 
@@ -227,6 +231,7 @@ src/echoids.c          App entry, screens, input, game loop
 src/game.[ch]          Generation from MACs, stats, crafting, battle rules (no SDK)
 src/scanner.[ch]       UART link to the ESP32 board, scan cycling, demo source
 src/scanner_parse.c    Marauder / CSV line parser (no SDK)
-src/save.[ch]          Save file
+src/save.[ch]          Save file (team, items, settings) and upgrades from old versions
+src/pac_store.[ch]     PAC storage file on the SD card (unlimited stored echoids)
 tests/test_game.c      Host-side unit tests
 ```
