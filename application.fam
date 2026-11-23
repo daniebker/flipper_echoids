@@ -1,0 +1,14 @@
+App(
+    appid="echoids",
+    name="Echoids",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="echoids_app",
+    requires=["gui", "storage", "notification"],
+    stack_size=4 * 1024,
+    fap_category="Games",
+    fap_icon="echoids.png",
+    fap_version="1.0",
+    fap_description="Collect creatures from WiFi access points and craft with shards from Bluetooth devices.",
+    fap_author="daniebker",
+    sources=["*.c", "!tests"],
+)
