@@ -10,6 +10,10 @@ Releases are published by pushing a `v*` tag (see
 
 ## [Unreleased]
 
+### Added
+- Screenshots of the Flipper and Android apps in the README.
+- This changelog, linked from the README and included in the docs download.
+
 ## [0.1.0] - 2026-11-23
 
 The first release.
@@ -85,7 +89,6 @@ The first release.
   date.
 - CI builds the Flipper app and the Android APKs, and a Release workflow
   publishes both with the docs and SHA256 checksums.
-- Screenshots of the Flipper and Android apps in the README.
 
 ### Fixed
 - Android 15: pages are no longer hidden under the title bar, and the tab bar
