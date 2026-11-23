@@ -127,6 +127,16 @@ const Move* echo_move_learned_at(const uint8_t mac[6], uint8_t level);
 /* The next move this echoid will learn, and at which level (NULL if none). */
 const Move* echo_next_move(const Echoid* e, uint8_t* at_level);
 const char* move_type_short(const Move* m);
+
+#define TYPED_MOVES       6 /* moves per type */
+#define SPECIES_PER_TYPE  3
+/* False for opposed elements: the type an echoid beats and the type that beats it. */
+bool move_type_learnable(uint8_t echo_type, uint8_t move_type);
+/* Tables, for docs and tools. */
+const Move* move_get(uint8_t type, uint8_t idx);
+uint8_t learnset_len(void);
+const Move* learnset_move(uint8_t type, uint8_t species, uint8_t i, uint8_t* level);
+const char* species_name_of(uint8_t type, uint8_t species);
 const char* shard_tier_name(uint8_t tier);
 const char* item_name(uint8_t item);
 Shard shard_from_mac(const uint8_t mac[6]);

@@ -874,7 +874,16 @@ static void draw_detail(App* app, Canvas* canvas) {
         else
             snprintf(buf, sizeof(buf), "Knows its final moves");
         canvas_draw_str(canvas, 0, 55, buf);
-        canvas_draw_str(canvas, 0, 63, "^v stats  OK actions");
+        /* The two opposed types this echoid can never learn moves of. */
+        EchoGenes ge;
+        echo_genes(e->mac, &ge);
+        snprintf(
+            buf,
+            sizeof(buf),
+            "Can't learn %s or %s",
+            echo_type_name((uint8_t)((ge.type + 1) % ECHO_TYPE_COUNT)),
+            echo_type_name((uint8_t)((ge.type + ECHO_TYPE_COUNT - 1) % ECHO_TYPE_COUNT)));
+        canvas_draw_str(canvas, 0, 63, buf);
     } else {
         snprintf(buf, sizeof(buf), "From: %.20s", e->origin);
         canvas_draw_str(canvas, 0, 54, buf);

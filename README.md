@@ -138,8 +138,14 @@ most of. Cheaper tiers are used first.
 
 ### Moves
 
+The **[Types and Moves wiki page](docs/wiki/Types-and-Moves.md)** lists every type, the full
+matchup chart, every move, which types can learn it, and each species' learnset.
+
 Every move has a type, and the [type chart](#types) applies to all of them: a move does
 2× damage to the type it beats and ½ damage to the type that beats it.
+
+An echoid can **never learn moves of its two opposed types**: the type it beats and the type
+that beats it (a Tide echoid never learns Ember or Void moves). Its Moves page says which.
 
 Every echoid learns moves as it levels up and can use its **4 most recently learned** moves.
 Later moves are stronger, so when a fifth is learned the oldest one is forgotten. Most moves
@@ -251,6 +257,15 @@ ufbt launch
 GitHub Actions also builds the `.fap` for the release and dev firmware channels, and the
 built files can be downloaded from each workflow run.
 
+### Wiki page
+
+`docs/wiki/Types-and-Moves.md` is generated from the game's tables. After changing moves or
+types, regenerate it (CI fails if it's out of date):
+
+```bash
+cc -std=c11 -Isrc src/game.c tools/gen_wiki.c -o gen_wiki && ./gen_wiki > docs/wiki/Types-and-Moves.md
+```
+
 ### Tests
 
 The game rules and the Marauder output parser don't depend on the Flipper SDK, so they
@@ -272,4 +287,6 @@ src/scanner_parse.c    Marauder / CSV line parser (no SDK)
 src/save.[ch]          Save file (team, items, settings) and upgrades from old versions
 src/pac_store.[ch]     PAC storage file on the SD card (unlimited stored echoids)
 tests/test_game.c      Host-side unit tests
+tools/gen_wiki.c       Generates docs/wiki/Types-and-Moves.md from the game tables
+docs/wiki/             Wiki pages (Types and Moves)
 ```

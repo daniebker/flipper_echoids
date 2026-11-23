@@ -264,6 +264,16 @@ static void test_moves(void) {
     CHECK(echo_move_learned_at(mac, 8) == next);
     CHECK(echo_move_learned_at(mac, 1) == NULL && echo_move_learned_at(mac, 9) == NULL);
 
+    /* Opposed types can never be learned, by any type or species */
+    for(uint8_t t = 0; t < ECHO_TYPE_COUNT; t++) {
+        CHECK(move_type_learnable(t, t));
+        CHECK(!move_type_learnable(t, (uint8_t)((t + 1) % ECHO_TYPE_COUNT)));
+        CHECK(!move_type_learnable(t, (uint8_t)((t + ECHO_TYPE_COUNT - 1) % ECHO_TYPE_COUNT)));
+        for(uint8_t sp = 0; sp < SPECIES_PER_TYPE; sp++)
+            for(uint8_t i = 0; i < learnset_len(); i++)
+                CHECK(move_type_learnable(t, learnset_move(t, sp, i, NULL)->type));
+    }
+
     /* Every move of every echoid has a real type */
     for(uint32_t i = 0; i < 2000; i++) {
         uint8_t mm[6] = {1, 2, (uint8_t)(i >> 8), (uint8_t)i, 5, 6};

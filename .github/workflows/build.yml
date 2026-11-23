@@ -13,6 +13,11 @@ jobs:
         run: |
           cc -std=c11 -Wall -Wextra -Werror -Isrc src/game.c src/scanner_parse.c tests/test_game.c -o test_game
           ./test_game
+      - name: Wiki page matches the code
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -Isrc src/game.c tools/gen_wiki.c -o gen_wiki
+          ./gen_wiki > docs/wiki/Types-and-Moves.md
+          git diff --exit-code docs/wiki/Types-and-Moves.md
 
   build:
     runs-on: ubuntu-latest

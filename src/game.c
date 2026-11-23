@@ -52,8 +52,7 @@ static const char* const type_short[ECHO_TYPE_COUNT] =
 
 /* ---- Moves ---- */
 
-#define TYPED_MOVES 6
-/* Six moves per type, weakest first. */
+/* Six moves per type (TYPED_MOVES), weakest first. */
 static const Move typed_moves[ECHO_TYPE_COUNT][TYPED_MOVES] = {
     {{"Splash Jab", EchoTypeTide, 45, 100},
      {"Bubble Shot", EchoTypeTide, 55, 95},
@@ -141,14 +140,43 @@ static uint8_t species_type(const EchoGenes* g) {
     return (uint8_t)((g->type + 3 + g->species) % ECHO_TYPE_COUNT);
 }
 
+bool move_type_learnable(uint8_t echo_type, uint8_t move_type) {
+    echo_type %= ECHO_TYPE_COUNT;
+    move_type %= ECHO_TYPE_COUNT;
+    /* Opposed elements: never the type it beats, nor the type that beats it. */
+    if(move_type == (echo_type + 1) % ECHO_TYPE_COUNT) return false;
+    if(echo_type == (move_type + 1) % ECHO_TYPE_COUNT) return false;
+    return true;
+}
+
 static const Move* learn_step_move(const EchoGenes* g, const LearnStep* st) {
     uint8_t t = g->type;
     if(st->from == LearnCounter) t = counter_type(g->type);
     if(st->from == LearnSpecies) t = species_type(g);
+    /* Safety net: an opposed type falls back to the echoid's own type. */
+    if(!move_type_learnable(g->type, t)) t = g->type;
     return &typed_moves[t % ECHO_TYPE_COUNT][st->move];
 }
 
-#define SPECIES_PER_TYPE 3
+const Move* move_get(uint8_t type, uint8_t idx) {
+    if(type >= ECHO_TYPE_COUNT || idx >= TYPED_MOVES) return NULL;
+    return &typed_moves[type][idx];
+}
+
+uint8_t learnset_len(void) {
+    return (uint8_t)LEARNSET_LEN;
+}
+
+const Move* learnset_move(uint8_t type, uint8_t species, uint8_t i, uint8_t* level) {
+    if(i >= LEARNSET_LEN) return NULL;
+    EchoGenes g;
+    memset(&g, 0, sizeof(g));
+    g.type = type % ECHO_TYPE_COUNT;
+    g.species = species;
+    if(level) *level = learnset[i].level;
+    return learn_step_move(&g, &learnset[i]);
+}
+
 static const char* const species_names[ECHO_TYPE_COUNT][SPECIES_PER_TYPE] = {
     {"Drizlet", "Wavern", "Abyssurge"},
     {"Cindrop", "Flarix", "Pyrovane"},
@@ -231,6 +259,10 @@ void echo_genes(const uint8_t mac[6], EchoGenes* g) {
     g->base_atk = 8 + mac_stream_next(&st) % 9 + bonus * 2;
     g->base_def = 8 + mac_stream_next(&st) % 9 + bonus * 2;
     g->base_spd = 8 + mac_stream_next(&st) % 9 + bonus * 2;
+}
+
+const char* species_name_of(uint8_t type, uint8_t species) {
+    return species_names[type % ECHO_TYPE_COUNT][species % SPECIES_PER_TYPE];
 }
 
 const char* echo_species_name(const uint8_t mac[6]) {
