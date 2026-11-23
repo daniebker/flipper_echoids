@@ -226,11 +226,6 @@ JNIEXPORT jstring JNICALL JNI_FN(swap)(JNIEnv* env, jclass cls, jint pac_index, 
     LOCKED_JSON(engine_swap((uint32_t)pac_index, (uint8_t)team_index));
 }
 
-JNIEXPORT jstring JNICALL JNI_FN(setDemo)(JNIEnv* env, jclass cls, jboolean demo) {
-    (void)cls;
-    LOCKED_JSON(engine_set_source(demo == JNI_TRUE));
-}
-
 JNIEXPORT jstring JNICALL JNI_FN(setBluetooth)(JNIEnv* env, jclass cls, jboolean on) {
     (void)cls;
     LOCKED_JSON(engine_set_bluetooth(on == JNI_TRUE));

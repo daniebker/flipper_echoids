@@ -46,8 +46,8 @@ work exactly the same way.
 - **Permissions:** the first time, allow **Location** and **Nearby devices**. Android only
   reveals nearby WiFi and Bluetooth devices to apps with these. Location, WiFi and Bluetooth
   must be switched on. If one is missing, Collect says which.
-- **Settings** (⋮ menu): switch to **Demo mode** (simulated echoids and shards), turn
-  Bluetooth shards on or off, see your stats, or reset the game.
+- **Settings** (⋮ menu): turn Bluetooth shards on or off, see your stats, or reset the
+  game.
 - **Android limits:** Android allows only a few WiFi scans every couple of minutes, so new
   access points can take up to about 30 seconds to appear. Many phones and headphones
   change their Bluetooth MAC address now and then, and each new address counts as a new
@@ -136,9 +136,6 @@ Custom firmware can also send this simple line format:
 AP,aa:bb:cc:dd:ee:ff,-60,MyNetwork
 BT,11:22:33:44:55:66,-70,MyHeadphones
 ```
-
-**No board?** Set **Settings → Board setup → Source → Demo**. The app then makes simulated sightings
-from a fixed pool of fake devices, so you can play and test without hardware.
 
 ## How to play
 
@@ -345,7 +342,6 @@ the selected value. Changes are saved straight away.
 
 | Option | What it does |
 |---|---|
-| Source | ESP32 board or Demo (simulated) |
 | Pins | `USART 13/14` (WiFi Devboard) or `LPUART 15/16` |
 | Baud | 115200 (Marauder default), 230400, 460800, 921600, 57600, 38400, 9600 |
 | 5V power | **Auto** turns 5V on while scanning and off afterwards. **Keep on** leaves it on. **Don't touch** never changes it (use this if the board has its own USB power) |

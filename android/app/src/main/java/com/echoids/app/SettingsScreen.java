@@ -27,9 +27,6 @@ final class SettingsScreen extends Screen {
 
         col.addView(Ui.heading(app, "Scanning"));
         LinearLayout scan = Ui.card(app);
-        scan.addView(toggle("Demo mode", "Simulated echoids and shards, no radios needed", st.optInt("source") == 1,
-            on -> app.act(Engine.setDemo(on))));
-        scan.addView(Ui.space(app, 1, 10));
         scan.addView(toggle("Bluetooth shards", "Scan Bluetooth devices for shards", st.optBoolean("bluetooth"),
             on -> app.act(Engine.setBluetooth(on))));
         col.addView(scan);

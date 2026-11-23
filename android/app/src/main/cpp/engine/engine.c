@@ -63,7 +63,7 @@ void engine_scan_set(bool on) {
 }
 
 int engine_radios_wanted(void) {
-    if(!ready || !S.scanning || S.save.source != ScanSourceBoard) return 0;
+    if(!ready || !S.scanning) return 0;
     return S.save.bt_enabled ? 2 : 1;
 }
 
@@ -201,9 +201,8 @@ char* engine_state_json(void) {
     json_obj(&j);
     json_kint(&j, "hour", S.hour);
     json_kbool(&j, "scanning", S.scanning);
-    json_kint(&j, "source", S.save.source);
     json_kbool(&j, "bluetooth", S.save.bt_enabled);
-    json_kstr(&j, "error", S.save.source == ScanSourceBoard ? radio_error : "");
+    json_kstr(&j, "error", radio_error);
     json_kint(&j, "spotted", S.spotted_count);
     json_kint(&j, "shards", S.shards_this_run);
     json_kint(&j, "asleep", S.asleep_count);
@@ -479,10 +478,6 @@ char* engine_pac_to_team(uint32_t i) {
 }
 char* engine_swap(uint32_t pac_index, uint8_t team_index) {
     return result(session_swap(&S, pac_index, team_index));
-}
-char* engine_set_source(int demo) {
-    session_set_demo(&S, demo != 0);
-    return result(true);
 }
 char* engine_set_bluetooth(bool on) {
     session_set_bluetooth(&S, on);

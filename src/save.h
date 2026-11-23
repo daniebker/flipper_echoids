@@ -13,7 +13,7 @@ typedef struct {
 
     uint8_t team_count; /* echoids in the team (1..PARTY_MAX) */
     uint8_t lead; /* index into team[] */
-    uint8_t source; /* ScanSource */
+    uint8_t unused_source; /* was the scan source (demo mode, now removed) */
     uint8_t uart; /* ScanUart */
     uint8_t bt_enabled;
     uint8_t reserved[3];

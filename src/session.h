@@ -2,7 +2,7 @@
  * Echoids session: one game being played, with no UI.
  *
  * This is the only place the session rules live: the save and starter,
- * scanning visits and demo sightings, the nearby list and time of day, shard
+ * scanning visits, the nearby list and time of day, shard
  * claims, battles and what follows them (catching, storing, wins, XP results),
  * items, crafting, team and PAC moves, HP regeneration and autosave. The
  * Flipper app (echoids.c) and the Android app (android/.../cpp) both drive a
@@ -33,7 +33,6 @@
 #define SESSION_MSG_LEN      40
 #define SESSION_REGEN_MS     5000
 #define SESSION_AUTOSAVE_MS  20000
-#define SESSION_DEMO_MS      1800
 
 typedef enum {
     NearbyWild,
@@ -78,7 +77,6 @@ typedef struct {
 
     /* Scanning visit */
     bool scanning;
-    uint32_t last_demo;
     Nearby nearby[SESSION_NEARBY_MAX];
     uint8_t nearby_count;
     uint8_t nearby_next_replace;
@@ -111,19 +109,18 @@ typedef struct {
 /* Loads the save, or starts a new game with a starter born from the device's
  * MAC. Returns true if a new game was started. */
 bool session_init(Session* s, const uint8_t device_mac[6], const char* device_name);
-/* Call often (every 50-250 ms): demo sightings, time of day, regen, autosave. */
+/* Call often (every 50-250 ms): time of day, regen, autosave. */
 void session_tick(Session* s);
 void session_save(Session* s);
-/* Starts over with a new starter. Settings (scan source, board setup) stay. */
+/* Starts over with a new starter. Settings (board setup, Bluetooth) stay. */
 bool session_reset(Session* s);
 
 /* ---- Scanning ---- */
 void session_scan_start(Session* s);
 void session_scan_stop(Session* s);
-/* A device heard by the radios (ignored unless scanning with real radios). */
+/* A device heard by the radios (ignored unless scanning). */
 void session_sighting(Session* s, const ScanEvent* ev);
 bool session_take_event(Session* s, SessionEvent* out);
-void session_set_demo(Session* s, bool demo);
 void session_set_bluetooth(Session* s, bool on);
 
 /* ---- Queries ---- */

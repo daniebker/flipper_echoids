@@ -1,6 +1,6 @@
 /*
  * Scanner: talks to an ESP32 board (e.g. the official WiFi Devboard) running
- * ESP32 Marauder over UART, or produces simulated sightings in demo mode.
+ * ESP32 Marauder over UART.
  */
 #pragma once
 
@@ -11,11 +11,6 @@
 #define SCAN_NAME_LEN  18
 #define SCAN_LOG_LINES 6
 #define SCAN_LOG_LEN   32
-
-typedef enum {
-    ScanSourceBoard,
-    ScanSourceDemo,
-} ScanSource;
 
 typedef enum {
     ScanUartUsart, /* pins 13 (TX) / 14 (RX) - WiFi Devboard default */
@@ -95,7 +90,7 @@ Scanner* scanner_alloc(void);
 void scanner_free(Scanner* s);
 
 /* Normal game scanning: cycles WiFi / BT scans automatically. */
-bool scanner_start(Scanner* s, ScanSource source, const ScanConfig* cfg);
+bool scanner_start(Scanner* s, const ScanConfig* cfg);
 /* Debug terminal: opens the UART but only sends what you tell it to. */
 bool scanner_start_manual(Scanner* s, const ScanConfig* cfg);
 void scanner_stop(Scanner* s);

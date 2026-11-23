@@ -12,7 +12,6 @@
 
 #include "pac_store.h"
 
-#define DEMO_POOL   24
 #define LEARNED_MAX 8 /* moves one battle or crystal can teach, at most */
 
 /* ------------------------------------------------------------------------- */
@@ -98,12 +97,11 @@ static bool note(uint32_t* list, uint16_t* count, uint16_t max, uint32_t h) {
 /* Game lifecycle                                                            */
 /* ------------------------------------------------------------------------- */
 
-/* Starts a new game, keeping the settings (scan source and board setup). */
+/* Starts a new game, keeping the settings (board setup and Bluetooth). */
 static void new_game(Session* s) {
     SaveData* sv = &s->save;
     bool keep = sv->magic == SAVE_MAGIC;
-    uint8_t cfg[10] = {
-        sv->source,
+    uint8_t cfg[9] = {
         sv->uart,
         sv->bt_enabled,
         sv->baud_idx,
@@ -116,20 +114,18 @@ static void new_game(Session* s) {
     memset(sv, 0, sizeof(*sv));
     sv->magic = SAVE_MAGIC;
     sv->version = SAVE_VERSION;
-    sv->source = ScanSourceBoard;
     sv->uart = ScanUartUsart;
     sv->bt_enabled = 1;
     if(keep) {
-        sv->source = cfg[0];
-        sv->uart = cfg[1];
-        sv->bt_enabled = cfg[2];
-        sv->baud_idx = cfg[3];
-        sv->power = cfg[4];
-        sv->boot_idx = cfg[5];
-        sv->eol = cfg[6];
-        sv->wifi_cmd = cfg[7];
-        sv->bt_cmd = cfg[8];
-        sv->log_sd = cfg[9];
+        sv->uart = cfg[0];
+        sv->bt_enabled = cfg[1];
+        sv->baud_idx = cfg[2];
+        sv->power = cfg[3];
+        sv->boot_idx = cfg[4];
+        sv->eol = cfg[5];
+        sv->wifi_cmd = cfg[6];
+        sv->bt_cmd = cfg[7];
+        sv->log_sd = cfg[8];
     }
     /* The starter is born from the device's own MAC. */
     echo_init(&sv->team[0], s->device_mac, 1, s->device_name[0] ? s->device_name : "Echoids");
@@ -279,33 +275,7 @@ static void handle(Session* s, const ScanEvent* ev) {
 }
 
 void session_sighting(Session* s, const ScanEvent* ev) {
-    if(s->scanning && s->save.source == ScanSourceBoard) handle(s, ev);
-}
-
-static const char* const demo_names[] = {
-    "HomeNet",  "CoffeeBar", "FreeWiFi", "Linksys", "NETGEAR42", "Office-5G",
-    "Pixel_7",  "TP-Link",   "Guest",    "Library", "Airport",   "Hotel_Lobby",
-};
-
-/* Demo mode: a fixed pool of simulated devices, so they reappear and stay the same. */
-static void demo_sighting(Session* s) {
-    ScanEvent ev;
-    memset(&ev, 0, sizeof(ev));
-    uint32_t idx = furi_hal_random_get() % DEMO_POOL;
-    bool bt = s->save.bt_enabled && furi_hal_random_get() % 3 == 0;
-    ev.type = bt ? ScanEventBt : ScanEventAp;
-    ev.mac[0] = bt ? 0xD0 : 0xDE;
-    ev.mac[1] = 0x00;
-    ev.mac[2] = 0x5E;
-    ev.mac[3] = (uint8_t)(idx * 37);
-    ev.mac[4] = (uint8_t)(idx * 101 + 7);
-    ev.mac[5] = (uint8_t)idx;
-    ev.rssi = (int8_t)(-40 - (int)(furi_hal_random_get() % 50));
-    if(bt)
-        snprintf(ev.name, SCAN_NAME_LEN, "BLE-%02X%02X", ev.mac[4], ev.mac[5]);
-    else
-        snprintf(ev.name, SCAN_NAME_LEN, "%s", demo_names[idx % (sizeof(demo_names) / sizeof(demo_names[0]))]);
-    handle(s, &ev);
+    if(s->scanning) handle(s, ev);
 }
 
 void session_scan_start(Session* s) {
@@ -314,20 +284,12 @@ void session_scan_start(Session* s) {
         if(s->nearby[i].state == NearbyWild && session_owns(s, s->nearby[i].mac))
             s->nearby[i].state = NearbyOwned;
     s->recharge_noted_count = 0;
-    s->last_demo = furi_get_tick();
     s->scanning = true;
 }
 
 void session_scan_stop(Session* s) {
     s->scanning = false;
     if(s->dirty) session_save(s);
-}
-
-void session_set_demo(Session* s, bool demo) {
-    s->save.source = demo ? ScanSourceDemo : ScanSourceBoard;
-    s->last_demo = furi_get_tick();
-    session_save(s);
-    say(s, demo ? "Demo mode on" : "Demo mode off");
 }
 
 void session_set_bluetooth(Session* s, bool on) {
@@ -349,12 +311,6 @@ void session_tick(Session* s) {
         s->hour_checked = s->hour;
         s->asleep_count = 0;
         nearby_prune_hour(s);
-    }
-
-    if(s->scanning && s->save.source == ScanSourceDemo &&
-       now - s->last_demo >= furi_ms_to_ticks(SESSION_DEMO_MS)) {
-        s->last_demo = now;
-        demo_sighting(s);
     }
 
     if(now - s->last_regen >= furi_ms_to_ticks(SESSION_REGEN_MS)) {
@@ -414,9 +370,14 @@ static void battle_log(Session* s, const char* msg) {
     snprintf(b->log[1], BATTLE_LOG_LEN, "%s", msg);
 }
 
-static void result_add(Session* s, const char* line) {
-    if(s->result_count < SESSION_RESULTS_MAX)
-        snprintf(s->results[s->result_count++], SESSION_RESULT_LEN, "%s", line);
+/* Adds a results line (cut to fit the screen). */
+static void result_add(Session* s, const char* fmt, ...) __attribute__((format(printf, 2, 3)));
+static void result_add(Session* s, const char* fmt, ...) {
+    if(s->result_count >= SESSION_RESULTS_MAX) return;
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(s->results[s->result_count++], SESSION_RESULT_LEN, fmt, args);
+    va_end(args);
 }
 
 static Nearby* battle_nearby(Session* s) {
@@ -434,7 +395,6 @@ bool session_battle_others_can_fight(Session* s) {
 /* What everyone who fought got out of the battle. */
 static void build_results(Session* s) {
     Battle* b = &s->battle;
-    char line[SESSION_RESULT_LEN + 16];
     s->result_count = 0;
     for(uint8_t i = 0; i < b->fought_n; i++) {
         Echoid* e = b->fought[i];
@@ -442,16 +402,13 @@ static void build_results(Session* s) {
         char name[ECHO_NAME_LEN];
         name_of(e->mac, name);
         if(e->level > before)
-            snprintf(line, sizeof(line), "%s +%lu Lv%u>%u", name, (unsigned long)b->fought_xp[i], before, e->level);
+            result_add(s, "%s +%lu Lv%u>%u", name, (unsigned long)b->fought_xp[i], before, e->level);
         else
-            snprintf(line, sizeof(line), "%s +%lu XP", name, (unsigned long)b->fought_xp[i]);
-        result_add(s, line);
+            result_add(s, "%s +%lu XP", name, (unsigned long)b->fought_xp[i]);
         const Move* learned[LEARNED_MAX];
         uint8_t n = echo_moves_learned(e->mac, before, e->level, learned, LEARNED_MAX);
-        for(uint8_t k = 0; k < n; k++) {
-            snprintf(line, sizeof(line), "  learned %s", learned[k]->name);
-            result_add(s, line);
-        }
+        for(uint8_t k = 0; k < n; k++)
+            result_add(s, "  learned %s", learned[k]->name);
     }
 }
 

@@ -47,7 +47,6 @@ final class Engine {
     static native String teamToPac(int teamIndex);
     static native String pacToTeam(int pacIndex);
     static native String swap(int pacIndex, int teamIndex);
-    static native String setDemo(boolean demo);
     static native String setBluetooth(boolean on);
     static native String reset();
 }

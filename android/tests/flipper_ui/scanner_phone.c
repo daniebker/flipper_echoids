@@ -34,7 +34,6 @@ const char* scanner_power_name(uint8_t power) {
 
 struct Scanner {
     bool running;
-    ScanSource source;
     ScanConfig cfg;
     ScanPhase phase;
     ScanStats stats;
@@ -84,15 +83,14 @@ void scanner_free(Scanner* s) {
     free(s);
 }
 
-bool scanner_start(Scanner* s, ScanSource source, const ScanConfig* cfg) {
+bool scanner_start(Scanner* s, const ScanConfig* cfg) {
     s->running = true;
-    s->source = source;
     s->cfg = *cfg;
     s->phase = ScanPhaseWifi;
     memset(&s->stats, 0, sizeof(s->stats));
     pthread_mutex_lock(&lock);
     q_count = 0;
-    wanted = source == ScanSourceBoard ? (cfg->bt_enabled ? 2 : 1) : 0;
+    wanted = cfg->bt_enabled ? 2 : 1;
     pthread_mutex_unlock(&lock);
     return true;
 }
@@ -124,20 +122,15 @@ void scanner_send_cmd(Scanner* s, const char* cmd) {
 bool scanner_poll(Scanner* s, ScanEvent* out) {
     if(!s->running) return false;
     bool got = false;
-    /* Demo sightings come from the game session, as on the Flipper. */
-    if(s->source == ScanSourceDemo) {
-        s->phase = ScanPhaseWifi;
-    } else {
-        pthread_mutex_lock(&lock);
-        if(q_count) {
-            *out = queue[q_head];
-            q_head = (q_head + 1) % QUEUE_MAX;
-            q_count--;
-            got = true;
-        }
-        pthread_mutex_unlock(&lock);
-        if(got) s->phase = out->type == ScanEventBt ? ScanPhaseBt : ScanPhaseWifi;
+    pthread_mutex_lock(&lock);
+    if(q_count) {
+        *out = queue[q_head];
+        q_head = (q_head + 1) % QUEUE_MAX;
+        q_count--;
+        got = true;
     }
+    pthread_mutex_unlock(&lock);
+    if(got) s->phase = out->type == ScanEventBt ? ScanPhaseBt : ScanPhaseWifi;
     if(got) {
         if(out->type == ScanEventAp)
             s->stats.aps++;
@@ -162,7 +155,7 @@ bool scanner_booting(Scanner* s) {
 }
 
 const char* scanner_error(Scanner* s) {
-    if(!s->running || s->source != ScanSourceBoard) return NULL;
+    if(!s->running) return NULL;
     return phone_error[0] ? phone_error : NULL;
 }
 

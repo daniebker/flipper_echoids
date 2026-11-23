@@ -107,7 +107,6 @@ static char* chk(char* json) {
 #define engine_team_to_pac(a) chk(engine_team_to_pac(a))
 #define engine_pac_to_team(a) chk(engine_pac_to_team(a))
 #define engine_swap(a, b) chk(engine_swap(a, b))
-#define engine_set_source(a) chk(engine_set_source(a))
 #define engine_set_bluetooth(a) chk(engine_set_bluetooth(a))
 #define engine_reset() chk(engine_reset())
 

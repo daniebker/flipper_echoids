@@ -119,7 +119,6 @@ static void v4_to_v5(const SaveDataV4* old, SaveDataV5* data) {
     data->version = 5;
     data->team_count = old->team_count;
     data->lead = old->lead;
-    data->source = old->source;
     data->uart = old->uart;
     data->bt_enabled = old->bt_enabled;
     data->pacs = LEGACY_PACS;
@@ -180,7 +179,6 @@ static bool v5_to_v6(SaveDataV5* old, SaveDataV6* data) {
     memset(data, 0, sizeof(*data));
     data->magic = SAVE_MAGIC;
     data->version = 6;
-    data->source = old->source;
     data->uart = old->uart;
     data->bt_enabled = old->bt_enabled;
     data->baud_idx = old->baud_idx;
@@ -225,7 +223,6 @@ static void v6_to_v7(const SaveDataV6* old, SaveData* data) {
     data->version = SAVE_VERSION;
     data->team_count = old->team_count;
     data->lead = old->lead;
-    data->source = old->source;
     data->uart = old->uart;
     data->bt_enabled = old->bt_enabled;
     data->baud_idx = old->baud_idx;

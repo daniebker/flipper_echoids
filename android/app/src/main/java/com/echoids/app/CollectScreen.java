@@ -29,7 +29,6 @@ final class CollectScreen extends Screen {
         JSONObject st = Ui.obj(Engine.state());
         JSONArray list = Ui.arr(Engine.nearby());
         boolean scanning = st.optBoolean("scanning");
-        boolean demo = st.optInt("source") == 1;
         int hour = st.optInt("hour");
         LinearLayout col = Ui.column(app);
 
@@ -38,8 +37,7 @@ final class CollectScreen extends Screen {
         LinearLayout top = Ui.row(app);
         LinearLayout titles = Ui.column(app);
         titles.addView(Ui.title(app, scanning ? "Scanning…" : "Ready to scan"));
-        String how = demo ? "Demo mode: simulated echoids" :
-                            (st.optBoolean("bluetooth") ? "WiFi for echoids, Bluetooth for shards" : "WiFi only (Bluetooth off)");
+        String how = st.optBoolean("bluetooth") ? "WiFi for echoids, Bluetooth for shards" : "WiFi only (Bluetooth off)";
         titles.addView(Ui.text(app, how, 13, Ui.MUTED));
         top.addView(titles, Ui.weight(1));
         Button toggle = scanning ? Ui.secondaryButton(app, "Stop", v -> {
@@ -53,7 +51,7 @@ final class CollectScreen extends Screen {
         head.addView(top);
 
         String error = st.optString("error");
-        if(scanning && !demo && !error.isEmpty()) {
+        if(scanning && !error.isEmpty()) {
             TextView err = Ui.text(app, "⚠ " + error, 14, Ui.BAD);
             err.setPadding(0, Ui.dp(app, 10), 0, 0);
             head.addView(err);

@@ -55,6 +55,5 @@ char* engine_set_lead(uint8_t team_index);
 char* engine_team_to_pac(uint8_t team_index);
 char* engine_pac_to_team(uint32_t pac_index);
 char* engine_swap(uint32_t pac_index, uint8_t team_index);
-char* engine_set_source(int demo);
 char* engine_set_bluetooth(bool on);
 char* engine_reset(void);

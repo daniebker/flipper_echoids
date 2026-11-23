@@ -20,8 +20,6 @@
 #include "pac_store.h"
 #include "session.h"
 
-#define SOURCE_LABEL       "ESP32 board"
-#define SOURCE_LABEL_SHORT "ESP32"
 #define BOARD_TITLE        "Board setup"
 #include "save.h"
 #include "scanner.h"
@@ -413,8 +411,6 @@ static void draw_collect(App* app, Canvas* canvas) {
                 app->s.hour);
             canvas_draw_str_aligned(canvas, 64, 28, AlignCenter, AlignCenter, info);
             canvas_draw_str_aligned(canvas, 64, 40, AlignCenter, AlignCenter, "Come back at another hour!");
-        } else if(app->s.save.source == ScanSourceDemo) {
-            canvas_draw_str_aligned(canvas, 64, 32, AlignCenter, AlignCenter, "Listening for echoes...");
         } else {
             /* Explain exactly what the board is (not) doing. */
             ScanStats st;
@@ -955,14 +951,8 @@ static void draw_bag(App* app, Canvas* canvas) {
 
 static void draw_settings(App* app, Canvas* canvas) {
     draw_title(canvas, "Settings", NULL);
-    char l0[32];
-    snprintf(
-        l0,
-        sizeof(l0),
-        BOARD_TITLE " (%s)",
-        app->s.save.source == ScanSourceDemo ? "Demo" : SOURCE_LABEL_SHORT);
     const char* lines[SETTINGS_COUNT] = {
-        l0,
+        BOARD_TITLE,
         "How to play",
         app->confirm_reset ? "Reset? OK again!" : "Reset game",
     };
@@ -1156,7 +1146,6 @@ static void list_move(uint8_t* idx, uint8_t* scroll, uint8_t count, uint8_t rows
 /* ------------------------------------------------------------------------- */
 
 enum {
-    BoardSource,
     BoardUart,
     BoardBaud,
     BoardPower,
@@ -1191,9 +1180,6 @@ static const char* uart_short(uint8_t uart) {
 static void board_row_text(App* app, uint8_t row, char* buf, size_t len) {
     SaveData* sv = &app->s.save;
     switch(row) {
-    case BoardSource:
-        snprintf(buf, len, "Source: %s", sv->source == ScanSourceDemo ? "Demo" : SOURCE_LABEL);
-        break;
     case BoardUart:
         snprintf(buf, len, "Pins: %s", scanner_uart_name(sv->uart % ScanUartCount));
         break;
@@ -1244,10 +1230,6 @@ static uint8_t cycle(uint8_t value, size_t count, int delta) {
 static void board_change(App* app, uint8_t row, int delta) {
     SaveData* sv = &app->s.save;
     switch(row) {
-    case BoardSource:
-        session_set_demo(&app->s, sv->source != ScanSourceDemo);
-        app->s.msg[0] = '\0'; /* the row shows the new value */
-        return;
     case BoardUart:
         sv->uart = cycle(sv->uart, ScanUartCount, delta);
         break;
@@ -1285,7 +1267,6 @@ static void board_change(App* app, uint8_t row, int delta) {
 
 /* The rows shown, in order. */
 static const uint8_t board_rows[] = {
-    BoardSource,
     BoardUart,
     BoardBaud,
     BoardPower,
@@ -1474,8 +1455,6 @@ static void calibrate_finish(App* app) {
         calibrate_candidate((uint8_t)app->cal_best, &uart, &baud);
         app->s.save.uart = uart;
         app->s.save.baud_idx = baud;
-        session_set_demo(&app->s, false);
-        app->s.msg[0] = '\0';
         app->s.dirty = true;
         session_save(&app->s);
         snprintf(
@@ -1600,13 +1579,9 @@ static void board_input(App* app, InputEvent* ev, bool press, int dy) {
         board_change(app, row, ev->key == InputKeyLeft ? -1 : 1);
     } else if(press && ev->key == InputKeyOk) {
         if(row == BoardTerminal) {
-            if(app->s.save.source == ScanSourceDemo) {
-                app_toast(app, "Set Source to ESP32 first");
-            } else {
-                app->term_otg_by_us = false;
-                terminal_open(app);
-                app->screen = ScreenTerminal;
-            }
+            app->term_otg_by_us = false;
+            terminal_open(app);
+            app->screen = ScreenTerminal;
         } else if(row == BoardCalibrate) {
             calibrate_start(app);
             app->screen = ScreenCalibrate;
@@ -1628,10 +1603,9 @@ static void app_say(App* app) {
 static void collect_start(App* app) {
     session_scan_start(&app->s);
     app->scan_started = furi_get_tick();
-    /* The board scans for real sightings; demo sightings come from the session. */
     ScanConfig cfg;
     app_scan_config(app, &cfg);
-    if(!scanner_start(app->scanner, (ScanSource)app->s.save.source, &cfg)) {
+    if(!scanner_start(app->scanner, &cfg)) {
         app_toast(app, scanner_error(app->scanner) ? scanner_error(app->scanner) : "Scanner error");
         notification_message(app->notif, &sequence_error);
     }
