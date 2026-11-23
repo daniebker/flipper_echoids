@@ -51,10 +51,18 @@ typedef enum {
     ItemEchoBall,
     ItemGreatBall,
     ItemPrismBall,
-    ItemTonic,
+    ItemTonic, /* +20 HP */
     ItemCrystal,
+    /* Added later: appended so saved item counts keep their meaning. */
+    ItemSuperTonic, /* +50 HP */
+    ItemMegaTonic, /* +100 HP */
+    ItemMaxTonic, /* full HP */
+    ItemRevive, /* brings a fainted echoid back with 1 HP */
     ItemCount,
 } ItemId;
+
+/* Saved item slots: room for new items without changing the save format. */
+#define ITEM_SLOTS 16
 
 /* Everything that is fixed for a given MAC address. */
 typedef struct {
@@ -92,8 +100,12 @@ typedef struct {
 
 typedef struct {
     uint16_t shards[ECHO_TYPE_COUNT][SHARD_TIER_COUNT];
-    uint16_t items[ItemCount];
+    uint16_t items[ITEM_SLOTS];
 } Inventory;
+
+/* HP a healing item restores: 0 for non-tonics, ITEM_HEAL_FULL for a Max Tonic. */
+#define ITEM_HEAL_FULL 0xFFFF
+uint16_t item_heal_amount(uint8_t item);
 
 /* ---------- RNG (battle randomness only, never used for generation) ---------- */
 void game_rng_seed(uint32_t seed);

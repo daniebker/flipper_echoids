@@ -70,7 +70,7 @@ from a fixed pool of fake devices, so you can play and test without hardware.
 | **Team** | Two tabs, switched with **←/→**: **Team** (up to 6 echoids you carry) and **PAC** (Cold PAC Storage for the rest). **OK** opens an echoid's details, where **←/→** browses and **OK** opens its actions. For a team member: **Set as lead** (the echoid that fights) or **Send to PAC**. For a PAC echoid: **Move to team**. If the team is full, you pick which team member to swap out. The team always keeps at least one echoid. |
 | **PAC** | Opens **Cold PAC Storage** straight away: browse every echoid you've stored with **↑/↓**, and press **OK** for its details and **Move to team**. The main menu shows how many echoids are stored. It's the same screen as Team's PAC tab, so **←/→** switches to the team. |
 | **Craft** | `+` marks recipes you can afford. **OK** crafts one. |
-| **Bag** | **←/→** switches between Items and Shards. **OK** on a Tonic or Echo Crystal opens your team list (PAC echoids aren't listed): pick the echoid to use it on with **↑/↓** and press **OK** (**Back** cancels). The list starts on your lead. |
+| **Bag** | **←/→** switches between Items and Shards. The item list scrolls with **↑/↓**. **OK** on a Tonic, Revive Crystal or Echo Crystal opens your team list (PAC echoids aren't listed): pick the echoid to use it on with **↑/↓** and press **OK** (**Back** cancels). The list starts on your lead. |
 | **Settings** | Board setup (see below), an in-app guide, and reset. |
 
 ### Types
@@ -89,7 +89,11 @@ Shards come in 8 elements (the same as the creature types) and three tiers:
 | Echo Ball | 3 Dull shards | Catch rate ×1.0 |
 | Great Ball | 2 Bright + 1 Dull | Catch rate ×1.5 |
 | Prism Ball | 1 Prismatic + 2 Bright | Catch rate ×2.5 |
-| Tonic | 2 Tide + 1 Flora (any tier) | Fully heals the echoid you choose, including a fainted one |
+| Tonic | 2 Tide + 1 Flora (any tier) | Restores 20 HP |
+| Super Tonic | 2 Tide + 2 Flora + 1 Bright | Restores 50 HP |
+| Mega Tonic | 3 Tide + 3 Flora + 2 Bright | Restores 100 HP |
+| Max Tonic | 3 Tide + 3 Flora + 1 Prismatic | Fully restores HP |
+| Revive Crystal | 2 Pulse + 1 Spark + 1 Bright | Brings a fainted echoid back with 1 HP |
 | Echo Crystal | 5 shards of any kind | Gives the echoid you choose half a level of XP |
 | PAC | 3 Dull + 2 Bright | Room for 10 more echoids in storage (no limit on PACs) |
 
@@ -113,8 +117,9 @@ the last 256 devices; when that list is full, the device collected longest ago i
 dropped from it. If the clock is set backwards, affected cooldowns start again rather
 than ending early.
 
-When a recipe accepts any element, the app uses shards from the element you have the
-most of. Cheaper tiers are used first.
+Recipes that name an element (like "2 Tide") use that element's cheapest shards first. After
+that, shards of a required tier ("1 Bright") come from whichever element you have the most of.
+So a Bright shard isn't spent on the Tide part of a recipe while a Dull Tide shard is available.
 
 ### Team and PAC
 
@@ -185,7 +190,14 @@ usually pick the one that hurts your echoid most.
 - After a battle that earned XP, pressing **OK** opens a **Results** screen. It lists each
   echoid that fought with its share of XP, any level-ups (for example `Lv12>13`) and any
   moves it learned. **↑/↓** scrolls, and **OK** goes back to Collect.
-- HP comes back at 1 point every 5 seconds outside battle. A Tonic fully heals whichever echoid you choose.
+- HP comes back at 1 point every 5 seconds outside battle, for team members that haven't fainted.
+- **Tonics** restore HP to the echoid you choose: Tonic +20, Super Tonic +50, Mega Tonic +100,
+  Max Tonic to full. They can't be used on a fainted echoid.
+- **A fainted echoid stays fainted** (it doesn't regain HP on its own) until you use a
+  **Revive Crystal** on it. That brings it back with 1 HP, and then Tonics and normal
+  regeneration work again. Echoids that leave the PAC are fully healed, fainted or not.
+- If your whole team has fainted you can't start a battle. Scanning for Bluetooth shards
+  still works in Collect, so you can craft Revive Crystals.
 
 Progress is saved to `/ext/apps_data/echoids/save.bin`.
 

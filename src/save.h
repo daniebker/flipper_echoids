@@ -4,7 +4,7 @@
 #include "scanner.h"
 
 #define SAVE_MAGIC   0x45434831u /* "ECH1" */
-#define SAVE_VERSION 6 /* v6: team in the save, PAC echoids in pac.bin */
+#define SAVE_VERSION 7 /* v7: 16 item slots (v6: PAC echoids in pac.bin) */
 #define SEEN_BT_MAX  256
 
 typedef struct {

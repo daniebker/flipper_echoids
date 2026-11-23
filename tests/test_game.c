@@ -342,6 +342,44 @@ static void test_moves(void) {
     }
 }
 
+static void test_tonics(void) {
+    CHECK(item_heal_amount(ItemTonic) == 20);
+    CHECK(item_heal_amount(ItemSuperTonic) == 50);
+    CHECK(item_heal_amount(ItemMegaTonic) == 100);
+    CHECK(item_heal_amount(ItemMaxTonic) == ITEM_HEAL_FULL);
+    CHECK(item_heal_amount(ItemRevive) == 0 && item_heal_amount(ItemEchoBall) == 0);
+
+    /* Every new recipe can be crafted and gives its item */
+    uint8_t outs[] = {ItemSuperTonic, ItemMegaTonic, ItemMaxTonic, ItemRevive};
+    for(size_t k = 0; k < sizeof(outs); k++) {
+        size_t r = recipe_count;
+        for(size_t i = 0; i < recipe_count; i++)
+            if(recipes[i].out == outs[k]) r = i;
+        CHECK(r < recipe_count);
+        Inventory inv;
+        memset(&inv, 0, sizeof(inv));
+        CHECK(!craft_can(&inv, r));
+        for(int t = 0; t < ECHO_TYPE_COUNT; t++) {
+            inv.shards[t][ShardDull] = 5;
+            inv.shards[t][ShardBright] = 3;
+            inv.shards[t][ShardPrismatic] = 1;
+        }
+        CHECK(craft_do(&inv, r) && inv.items[outs[k]] == 1);
+    }
+
+    /* A Bright Tide shard isn't wasted on the Tide part while a Dull one exists */
+    size_t super = 0;
+    for(size_t i = 0; i < recipe_count; i++)
+        if(recipes[i].out == ItemSuperTonic) super = i;
+    Inventory inv;
+    memset(&inv, 0, sizeof(inv));
+    inv.shards[EchoTypeTide][ShardDull] = 2;
+    inv.shards[EchoTypeFlora][ShardDull] = 2;
+    inv.shards[EchoTypeTide][ShardBright] = 1;
+    CHECK(craft_do(&inv, super));
+    CHECK(inventory_shard_total(&inv) == 0);
+}
+
 static void test_type_chart(void) {
     CHECK(echo_type_mult(EchoTypeTide, EchoTypeEmber) == 200);
     CHECK(echo_type_mult(EchoTypeEmber, EchoTypeTide) == 50);
@@ -420,6 +458,7 @@ int main(void) {
     test_roster();
     test_pac_recipe();
     test_moves();
+    test_tonics();
     if(failures) {
         printf("%d failure(s)\n", failures);
         return 1;

@@ -32,6 +32,7 @@
 #define RECHARGE_NOTED_MAX 48
 #define RESULT_LINES_MAX   24
 #define RESULT_ROWS        5
+#define BAG_ROWS           5
 
 typedef enum {
     ScreenIntro,
@@ -131,6 +132,7 @@ typedef struct {
     uint8_t craft_scroll;
     uint8_t bag_tab;
     uint8_t bag_idx;
+    uint8_t bag_scroll;
     uint8_t use_item_id;
     uint8_t use_idx;
     uint8_t use_scroll;
@@ -798,7 +800,9 @@ static void draw_use_on(App* app, Canvas* canvas) {
     draw_team_roster(
         app,
         canvas,
-        app->use_item_id == ItemTonic ? "Heal who?" : "Crystal on?",
+        item_heal_amount(app->use_item_id) ? "Heal who?" :
+        app->use_item_id == ItemRevive    ? "Revive who?" :
+                                            "Crystal on?",
         buf,
         app->use_idx,
         app->use_scroll);
@@ -953,14 +957,17 @@ static void draw_bag(App* app, Canvas* canvas) {
     char buf[32];
     draw_title(canvas, app->bag_tab == 0 ? "Bag: Items" : "Bag: Shards", "<  >");
     if(app->bag_tab == 0) {
-        for(uint8_t i = 0; i < ItemCount; i++) {
-            int y = 22 + i * 9;
+        for(uint8_t row = 0; row < BAG_ROWS; row++) {
+            uint8_t i = app->bag_scroll + row;
+            if(i >= ItemCount) break;
+            int y = 22 + row * 10;
             draw_row(canvas, y, i == app->bag_idx);
             canvas_draw_str(canvas, 2, y, item_name(i));
             snprintf(buf, sizeof(buf), "x%u", app->save.inv.items[i]);
             canvas_draw_str_aligned(canvas, 121, y, AlignRight, AlignBottom, buf);
         }
         canvas_set_color(canvas, ColorBlack);
+        elements_scrollbar_pos(canvas, 127, 14, 48, app->bag_idx, ItemCount);
     } else {
         canvas_draw_str(canvas, 2, 21, "Dull/Bright/Prismatic");
         for(uint8_t t = 0; t < ECHO_TYPE_COUNT; t++) {
@@ -1046,7 +1053,10 @@ static const char* const help_lines[] = {
     "everyone who fought shares",
     "it evenly.",
     "HP regenerates slowly, or",
-    "use a Tonic from the Bag.",
+    "use Tonics: +20, Super +50,",
+    "Mega +100, Max = full HP.",
+    "Fainted echoids don't heal:",
+    "use a Revive Crystal first.",
     "* owned  x already fought",
     "Top right: echoids spotted",
     "(ball) and shards found",
@@ -1739,7 +1749,7 @@ static void battle_begin(App* app) {
             if(app->save.team[i].hp > 0) lead = &app->save.team[i];
     }
     if(!lead) {
-        app_toast(app, "Your team has all fainted");
+        app_toast(app, "All fainted: use Revives");
         return;
     }
     /* Wild levels follow your lead, even if another echoid starts. */
@@ -1921,15 +1931,37 @@ static bool use_item_on(App* app, uint8_t item, Echoid* target) {
         app_toast(app, "You have none");
         return false;
     }
-    if(item == ItemTonic) {
+    uint16_t heal = item_heal_amount(item);
+    if(heal) {
+        /* Tonics: a fainted echoid needs a Revive Crystal first. */
+        if(target->hp == 0) {
+            snprintf(msg, sizeof(msg), "%s fainted: revive first", name);
+            app_toast(app, msg);
+            return false;
+        }
         if(target->hp >= s.max_hp) {
             snprintf(msg, sizeof(msg), "%s is at full HP", name);
             app_toast(app, msg);
             return false;
         }
-        target->hp = s.max_hp;
+        uint16_t before = target->hp;
+        uint32_t hp = heal == ITEM_HEAL_FULL ? s.max_hp : (uint32_t)target->hp + heal;
+        target->hp = hp > s.max_hp ? s.max_hp : (uint16_t)hp;
         inv->items[item]--;
-        snprintf(msg, sizeof(msg), "%s fully healed!", name);
+        if(target->hp == s.max_hp)
+            snprintf(msg, sizeof(msg), "%s fully healed!", name);
+        else
+            snprintf(msg, sizeof(msg), "%s +%u HP", name, target->hp - before);
+        app_toast(app, msg);
+    } else if(item == ItemRevive) {
+        if(target->hp > 0) {
+            snprintf(msg, sizeof(msg), "%s hasn't fainted", name);
+            app_toast(app, msg);
+            return false;
+        }
+        target->hp = 1;
+        inv->items[item]--;
+        snprintf(msg, sizeof(msg), "%s revived (1 HP)", name);
         app_toast(app, msg);
     } else if(item == ItemCrystal) {
         if(target->level >= MAX_LEVEL) {
@@ -2362,10 +2394,11 @@ static void handle_input(App* app, InputEvent* ev) {
         if(press && (ev->key == InputKeyLeft || ev->key == InputKeyRight)) {
             app->bag_tab ^= 1;
         } else if(dy && app->bag_tab == 0) {
-            app->bag_idx = (uint8_t)((app->bag_idx + ItemCount + dy) % ItemCount);
+            list_move(&app->bag_idx, &app->bag_scroll, ItemCount, BAG_ROWS, dy);
         } else if(press && ev->key == InputKeyOk && app->bag_tab == 0) {
             uint8_t item = app->bag_idx;
-            if(item != ItemTonic && item != ItemCrystal) {
+            bool usable = item_heal_amount(item) || item == ItemRevive || item == ItemCrystal;
+            if(!usable) {
                 app_toast(app, "Use balls in battle");
             } else if(app->save.inv.items[item] == 0) {
                 app_toast(app, "You have none");
@@ -2489,7 +2522,8 @@ static void app_tick(App* app) {
                 Echoid* e = &app->save.team[i];
                 EchoStats s;
                 echo_stats(e, &s);
-                if(e->hp < s.max_hp) e->hp++;
+                /* Fainted echoids stay down until a Revive Crystal. */
+                if(e->hp > 0 && e->hp < s.max_hp) e->hp++;
             }
         }
     }

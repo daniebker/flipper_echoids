@@ -193,8 +193,34 @@ static const char* const rarity_names[RarityCount] =
 
 static const char* const tier_names[SHARD_TIER_COUNT] = {"Dull", "Bright", "Prismatic"};
 
-static const char* const item_names[ItemCount] =
-    {"Echo Ball", "Great Ball", "Prism Ball", "Tonic", "Echo Crystal"};
+static const char* const item_names[ItemCount] = {
+    "Echo Ball",
+    "Great Ball",
+    "Prism Ball",
+    "Tonic",
+    "Echo Crystal",
+    "Super Tonic",
+    "Mega Tonic",
+    "Max Tonic",
+    "Revive Crystal",
+};
+
+_Static_assert(ItemCount <= ITEM_SLOTS, "more items than saved item slots");
+
+uint16_t item_heal_amount(uint8_t item) {
+    switch(item) {
+    case ItemTonic:
+        return 20;
+    case ItemSuperTonic:
+        return 50;
+    case ItemMegaTonic:
+        return 100;
+    case ItemMaxTonic:
+        return ITEM_HEAL_FULL;
+    default:
+        return 0;
+    }
+}
 
 const char* echo_type_name(uint8_t type) {
     return type_names[type % ECHO_TYPE_COUNT];
@@ -510,6 +536,10 @@ const Recipe recipes[] = {
     {"Great Ball", "2 Bright + 1 Dull", ItemGreatBall, {1, 2, 0}, -1, 0, -1, 0, 0},
     {"Prism Ball", "1 Prismatic + 2 Bright", ItemPrismBall, {0, 2, 1}, -1, 0, -1, 0, 0},
     {"Tonic", "2 Tide + 1 Flora", ItemTonic, {0, 0, 0}, EchoTypeTide, 2, EchoTypeFlora, 1, 0},
+    {"Super Tonic", "2 Tide 2 Flora 1 Bright", ItemSuperTonic, {0, 1, 0}, EchoTypeTide, 2, EchoTypeFlora, 2, 0},
+    {"Mega Tonic", "3 Tide 3 Flora 2 Bright", ItemMegaTonic, {0, 2, 0}, EchoTypeTide, 3, EchoTypeFlora, 3, 0},
+    {"Max Tonic", "3 Tide 3 Flora 1 Prism", ItemMaxTonic, {0, 0, 1}, EchoTypeTide, 3, EchoTypeFlora, 3, 0},
+    {"Revive Crystal", "2 Pulse 1 Spark 1 Bright", ItemRevive, {0, 1, 0}, EchoTypePulse, 2, EchoTypeSpark, 1, 0},
     {"Echo Crystal", "5 shards of any kind", ItemCrystal, {0, 0, 0}, -1, 0, -1, 0, 5},
     {"PAC (+10 room)", "3 Dull + 2 Bright shards", CRAFT_OUT_PAC, {3, 2, 0}, -1, 0, -1, 0, 0},
 };
@@ -627,10 +657,11 @@ static bool take_any(Inventory* inv, uint8_t n) {
 }
 
 static bool craft_apply(Inventory* inv, const Recipe* r) {
-    for(int k = SHARD_TIER_COUNT - 1; k >= 0; k--)
-        if(!take_tier(inv, (uint8_t)k, r->tier_need[k])) return false;
+    /* Element shards first (they use the cheapest tiers), then tier shards. */
     if(r->elem_a >= 0 && !take_elem(inv, (uint8_t)r->elem_a, r->elem_a_n)) return false;
     if(r->elem_b >= 0 && !take_elem(inv, (uint8_t)r->elem_b, r->elem_b_n)) return false;
+    for(int k = SHARD_TIER_COUNT - 1; k >= 0; k--)
+        if(!take_tier(inv, (uint8_t)k, r->tier_need[k])) return false;
     if(!take_any(inv, r->any_n)) return false;
     return true;
 }

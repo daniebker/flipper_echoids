@@ -9,6 +9,12 @@
 #define SAVE_PATH        APP_DATA_PATH("save.bin")
 #define SAVE_BACKUP_PATH APP_DATA_PATH("save_old_version.bin")
 
+/* ---- Save versions 1-6 stored 5 item counts (no spare item slots) ---- */
+typedef struct {
+    uint16_t shards[ECHO_TYPE_COUNT][SHARD_TIER_COUNT];
+    uint16_t items[5];
+} InventoryV6;
+
 /* ---- Save versions 1-4: a fixed table of 40 echoids, no PACs to craft ---- */
 /* ---- Save version 5: one table of up to 106 echoids, flags mark the team ---- */
 
@@ -25,7 +31,7 @@ typedef struct {
     uint8_t bt_enabled;
     uint8_t reserved[3];
     Echoid team[LEGACY_MAX];
-    Inventory inv;
+    InventoryV6 inv;
     uint32_t seen_bt[SEEN_BT_MAX];
     uint16_t seen_bt_count;
     uint16_t seen_bt_pos;
@@ -96,7 +102,7 @@ typedef struct {
     uint8_t bt_cmd;
     uint8_t log_sd;
     uint8_t reserved2[9];
-    Inventory inv;
+    InventoryV6 inv;
     uint32_t captures;
     uint32_t wins;
     uint32_t shards_found;
@@ -134,15 +140,46 @@ static void v4_to_v5(const SaveDataV4* old, SaveDataV5* data) {
     memcpy(data->team, old->team, sizeof(Echoid) * old->team_count);
 }
 
+/* ---- Save version 6: the current layout, but with InventoryV6 ---- */
+typedef struct {
+    uint32_t magic;
+    uint32_t version;
+    uint8_t team_count;
+    uint8_t lead;
+    uint8_t source;
+    uint8_t uart;
+    uint8_t bt_enabled;
+    uint8_t reserved[3];
+    uint8_t baud_idx;
+    uint8_t power;
+    uint8_t boot_idx;
+    uint8_t eol;
+    uint8_t wifi_cmd;
+    uint8_t bt_cmd;
+    uint8_t log_sd;
+    uint8_t reserved2[9];
+    uint32_t pacs;
+    uint32_t pac_count;
+    InventoryV6 inv;
+    uint32_t captures;
+    uint32_t wins;
+    uint32_t shards_found;
+    uint32_t seen_bt[SEEN_BT_MAX];
+    uint32_t seen_bt_time[SEEN_BT_MAX];
+    uint16_t seen_bt_count;
+    uint16_t reserved3;
+    Echoid team[PARTY_MAX];
+} SaveDataV6;
+
 /* v5 -> v6: team members stay in the save, the rest are written to pac.bin. */
-static bool v5_to_v6(SaveDataV5* old, SaveData* data) {
+static bool v5_to_v6(SaveDataV5* old, SaveDataV6* data) {
     if(old->team_count == 0 || old->team_count > V5_MAX) return false;
     if(old->lead >= old->team_count) old->lead = 0;
     roster_normalize(old->team, old->team_count, &old->lead, false);
 
     memset(data, 0, sizeof(*data));
     data->magic = SAVE_MAGIC;
-    data->version = SAVE_VERSION;
+    data->version = 6;
     data->source = old->source;
     data->uart = old->uart;
     data->bt_enabled = old->bt_enabled;
@@ -176,9 +213,40 @@ static bool v5_to_v6(SaveDataV5* old, SaveData* data) {
         }
     }
     /* Never shrink the room the player already had. */
-    while(save_pac_capacity(data) < data->pac_count)
+    while((uint64_t)PAC_SIZE * data->pacs < data->pac_count)
         data->pacs++;
     return data->team_count > 0;
+}
+
+/* v6 -> v7: the inventory gains spare item slots; everything else is copied. */
+static void v6_to_v7(const SaveDataV6* old, SaveData* data) {
+    memset(data, 0, sizeof(*data));
+    data->magic = SAVE_MAGIC;
+    data->version = SAVE_VERSION;
+    data->team_count = old->team_count;
+    data->lead = old->lead;
+    data->source = old->source;
+    data->uart = old->uart;
+    data->bt_enabled = old->bt_enabled;
+    data->baud_idx = old->baud_idx;
+    data->power = old->power;
+    data->boot_idx = old->boot_idx;
+    data->eol = old->eol;
+    data->wifi_cmd = old->wifi_cmd;
+    data->bt_cmd = old->bt_cmd;
+    data->log_sd = old->log_sd;
+    data->pacs = old->pacs;
+    data->pac_count = old->pac_count;
+    memcpy(data->inv.shards, old->inv.shards, sizeof(old->inv.shards));
+    for(int i = 0; i < 5; i++)
+        data->inv.items[i] = old->inv.items[i];
+    data->captures = old->captures;
+    data->wins = old->wins;
+    data->shards_found = old->shards_found;
+    memcpy(data->seen_bt, old->seen_bt, sizeof(data->seen_bt));
+    memcpy(data->seen_bt_time, old->seen_bt_time, sizeof(data->seen_bt_time));
+    data->seen_bt_count = old->seen_bt_count;
+    memcpy(data->team, old->team, sizeof(data->team));
 }
 
 /* ---------------------------------------------------------------------------- */
@@ -205,28 +273,38 @@ bool save_load(SaveData* data) {
 
     if(data->version == SAVE_VERSION) {
         ok = read == sizeof(SaveData);
-    } else if(data->version >= 1 && data->version <= 5) {
+    } else if(data->version >= 1 && data->version <= 6) {
         /* Keep a copy of the old file first: if anything goes wrong below,
          * the player's progress is still on the card. */
+        uint32_t version = data->version;
         Storage* storage = furi_record_open(RECORD_STORAGE);
         storage_simply_remove(storage, SAVE_BACKUP_PATH);
         storage_common_copy(storage, SAVE_PATH, SAVE_BACKUP_PATH);
         furi_record_close(RECORD_STORAGE);
         /* Old layout: read it again into the legacy structs and convert. */
-        SaveDataV5* v5 = malloc(sizeof(SaveDataV5));
-        memset(v5, 0, sizeof(SaveDataV5));
-        if(data->version == 5) {
-            ok = read_save(v5, sizeof(SaveDataV5)) == sizeof(SaveDataV5);
+        SaveDataV6* v6 = malloc(sizeof(SaveDataV6));
+        memset(v6, 0, sizeof(SaveDataV6));
+        if(version == 6) {
+            ok = read_save(v6, sizeof(SaveDataV6)) == sizeof(SaveDataV6);
         } else {
-            SaveDataV4* v4 = malloc(sizeof(SaveDataV4));
-            memset(v4, 0, sizeof(SaveDataV4));
-            size_t old_read = read_save(v4, sizeof(SaveDataV4));
-            ok = legacy_upgrade(v4, old_read);
-            if(ok) v4_to_v5(v4, v5);
-            free(v4);
+            SaveDataV5* v5 = malloc(sizeof(SaveDataV5));
+            memset(v5, 0, sizeof(SaveDataV5));
+            if(version == 5) {
+                ok = read_save(v5, sizeof(SaveDataV5)) == sizeof(SaveDataV5);
+            } else {
+                SaveDataV4* v4 = malloc(sizeof(SaveDataV4));
+                memset(v4, 0, sizeof(SaveDataV4));
+                size_t old_read = read_save(v4, sizeof(SaveDataV4));
+                ok = legacy_upgrade(v4, old_read);
+                if(ok) v4_to_v5(v4, v5);
+                free(v4);
+            }
+            /* v5 -> v6 also moves stored echoids into the PAC file. */
+            if(ok) ok = v5_to_v6(v5, v6);
+            free(v5);
         }
-        if(ok) ok = v5_to_v6(v5, data);
-        free(v5);
+        if(ok) v6_to_v7(v6, data);
+        free(v6);
         upgraded = ok;
     }
     if(!ok) return false;
