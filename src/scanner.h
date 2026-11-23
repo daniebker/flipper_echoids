@@ -58,7 +58,11 @@ typedef struct {
     uint8_t wifi_cmd; /* scanner_wifi_cmds[] */
     uint8_t bt_cmd; /* scanner_bt_cmds[] */
     uint8_t bt_enabled;
+    uint8_t log_sd; /* append raw UART traffic to SCAN_LOG_PATH */
 } ScanConfig;
+
+#define SCAN_LOG_PATH     "/ext/apps_data/echoids/uart_log.txt"
+#define SCAN_LOG_MAX_SIZE (256u * 1024u)
 
 typedef struct {
     uint32_t rx_bytes;
@@ -109,6 +113,8 @@ bool scanner_booting(Scanner* s);
 const char* scanner_error(Scanner* s);
 void scanner_get_stats(Scanner* s, ScanStats* out);
 void scanner_reset_stats(Scanner* s);
+/* Last line received from the board (empty if none). */
+void scanner_last_rx(Scanner* s, char* out, size_t size);
 /* Copies the raw RX/TX log, oldest first. Returns number of lines. */
 size_t scanner_get_log(Scanner* s, char out[SCAN_LOG_LINES][SCAN_LOG_LEN]);
 

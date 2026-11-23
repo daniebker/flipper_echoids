@@ -161,6 +161,7 @@ static void app_new_game(App* app) {
         app->save.eol = old.eol;
         app->save.wifi_cmd = old.wifi_cmd;
         app->save.bt_cmd = old.bt_cmd;
+        app->save.log_sd = old.log_sd;
     }
 
     /* The starter is born from this Flipper's own Bluetooth MAC. */
@@ -182,6 +183,7 @@ static void app_scan_config(App* app, ScanConfig* cfg) {
     cfg->wifi_cmd = app->save.wifi_cmd % scanner_wifi_cmd_count;
     cfg->bt_cmd = app->save.bt_cmd % scanner_bt_cmd_count;
     cfg->bt_enabled = app->save.bt_enabled;
+    cfg->log_sd = app->save.log_sd;
 }
 
 static void app_save(App* app) {
@@ -353,25 +355,45 @@ static void draw_collect(App* app, Canvas* canvas) {
             canvas_draw_str_aligned(canvas, 64, 38, AlignCenter, AlignCenter, "Settings > Board setup");
         } else if(scanner_booting(app->scanner)) {
             canvas_draw_str_aligned(canvas, 64, 32, AlignCenter, AlignCenter, "Powering up board...");
-        } else if(
-            !scanner_board_alive(app->scanner) &&
-            waited > furi_ms_to_ticks(BOARD_TIMEOUT_MS)) {
-            canvas_draw_str_aligned(canvas, 64, 26, AlignCenter, AlignCenter, "No data from board");
-            canvas_draw_str_aligned(canvas, 64, 37, AlignCenter, AlignCenter, "Try Settings > Board");
-            canvas_draw_str_aligned(canvas, 64, 47, AlignCenter, AlignCenter, "setup > Terminal");
+        } else if(app->save.source == ScanSourceDemo) {
+            canvas_draw_str_aligned(canvas, 64, 32, AlignCenter, AlignCenter, "Listening for echoes...");
         } else {
+            /* Explain exactly what the board is (not) doing. */
             ScanStats st;
             scanner_get_stats(app->scanner, &st);
-            canvas_draw_str_aligned(canvas, 64, 28, AlignCenter, AlignCenter, "Listening for echoes...");
-            if(app->save.source == ScanSourceBoard) {
-                char info[32];
-                snprintf(
-                    info,
-                    sizeof(info),
-                    "rx %lu  lines %lu",
-                    (unsigned long)st.rx_bytes,
-                    (unsigned long)st.lines);
-                canvas_draw_str_aligned(canvas, 64, 40, AlignCenter, AlignCenter, info);
+            char info[40];
+            const char* status;
+            if(!scanner_board_alive(app->scanner)) {
+                status = waited > furi_ms_to_ticks(BOARD_TIMEOUT_MS) ? "Board is silent" :
+                                                                       "Waiting for board...";
+            } else if(st.rx_garbage > st.rx_printable / 4) {
+                status = "Garbled data: wrong baud?";
+            } else if(scanner_phase(app->scanner) == ScanPhaseBt) {
+                status = "BT scan, no networks yet";
+            } else {
+                status = "Board talks, no networks";
+            }
+            canvas_draw_str_aligned(canvas, 64, 19, AlignCenter, AlignCenter, status);
+            snprintf(
+                info,
+                sizeof(info),
+                "rx%lu ln%lu ap%lu bt%lu",
+                (unsigned long)st.rx_bytes,
+                (unsigned long)st.lines,
+                (unsigned long)st.aps,
+                (unsigned long)st.bts);
+            canvas_draw_str_aligned(canvas, 64, 29, AlignCenter, AlignCenter, info);
+            char last[SCAN_LOG_LEN * 2];
+            scanner_last_rx(app->scanner, last, sizeof(last));
+            if(last[0]) {
+                canvas_set_font(canvas, FontKeyboard);
+                canvas_draw_str(canvas, 0, 40, "Last line from board:");
+                canvas_draw_str(canvas, 0, 48, last);
+                if(strlen(last) > 21) canvas_draw_str(canvas, 0, 56, last + 21);
+                canvas_set_font(canvas, FontSecondary);
+            } else {
+                canvas_draw_str_aligned(canvas, 64, 42, AlignCenter, AlignCenter, "Check Settings > Board");
+                canvas_draw_str_aligned(canvas, 64, 52, AlignCenter, AlignCenter, "setup > UART terminal");
             }
         }
     }
@@ -755,6 +777,7 @@ enum {
     BoardWifiCmd,
     BoardBtCmd,
     BoardBt,
+    BoardLog,
     BoardTerminal,
     BoardCalibrate,
     BoardCount,
@@ -812,6 +835,9 @@ static void board_row_text(App* app, uint8_t row, char* buf, size_t len) {
     case BoardBt:
         snprintf(buf, len, "Bluetooth scan: %s", sv->bt_enabled ? "On" : "Off");
         break;
+    case BoardLog:
+        snprintf(buf, len, "Log UART to SD: %s", sv->log_sd ? "On" : "Off");
+        break;
     case BoardTerminal:
         snprintf(buf, len, "> UART terminal");
         break;
@@ -856,6 +882,10 @@ static void board_change(App* app, uint8_t row, int delta) {
         break;
     case BoardBt:
         sv->bt_enabled = !sv->bt_enabled;
+        break;
+    case BoardLog:
+        sv->log_sd = !sv->log_sd;
+        if(sv->log_sd) app_toast(app, "Saves to apps_data/echoids");
         break;
     default:
         return;

@@ -37,7 +37,8 @@ typedef struct {
     uint8_t eol;
     uint8_t wifi_cmd;
     uint8_t bt_cmd;
-    uint8_t reserved2[10];
+    uint8_t log_sd;
+    uint8_t reserved2[9];
 } SaveData;
 
 /* Size of a version 1 save file: everything before the v2 fields. */

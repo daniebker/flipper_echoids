@@ -3,6 +3,7 @@
 #include <furi.h>
 #include <furi_hal.h>
 #include <expansion/expansion.h>
+#include <storage/storage.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -67,12 +68,53 @@ struct Scanner {
     bool bt_unsupported;
 
     ScanStats stats;
+    char last_rx[SCAN_LOG_LEN * 2];
+    Storage* storage;
+    File* log_file;
     char log[SCAN_LOG_LINES][SCAN_LOG_LEN];
     uint8_t log_pos;
     uint8_t log_count;
 };
 
 /* ------------------------------------------------------------------------- */
+
+/* Raw traffic log on the SD card, for debugging board output formats. */
+static void scanner_file_open(Scanner* s) {
+    s->storage = furi_record_open(RECORD_STORAGE);
+    storage_simply_mkdir(s->storage, "/ext/apps_data/echoids");
+    s->log_file = storage_file_alloc(s->storage);
+    if(!storage_file_open(s->log_file, SCAN_LOG_PATH, FSAM_WRITE, FSOM_OPEN_APPEND)) {
+        storage_file_free(s->log_file);
+        s->log_file = NULL;
+        furi_record_close(RECORD_STORAGE);
+        s->storage = NULL;
+    }
+}
+
+static void scanner_file_close(Scanner* s) {
+    if(s->log_file) {
+        storage_file_close(s->log_file);
+        storage_file_free(s->log_file);
+        s->log_file = NULL;
+    }
+    if(s->storage) {
+        furi_record_close(RECORD_STORAGE);
+        s->storage = NULL;
+    }
+}
+
+static void scanner_file_write(Scanner* s, const char* prefix, const char* text, size_t len) {
+    if(!s->log_file) return;
+    if(storage_file_size(s->log_file) > SCAN_LOG_MAX_SIZE) return;
+    storage_file_write(s->log_file, prefix, strlen(prefix));
+    storage_file_write(s->log_file, text, len);
+    storage_file_write(s->log_file, "\n", 1);
+}
+
+void scanner_last_rx(Scanner* s, char* out, size_t size) {
+    strncpy(out, s->last_rx, size - 1);
+    out[size - 1] = '\0';
+}
 
 static void scanner_log(Scanner* s, char prefix, const char* text, size_t len) {
     char* dst = s->log[s->log_pos];
@@ -111,6 +153,7 @@ static void scanner_tx_raw(Scanner* s, const char* cmd) {
     furi_hal_serial_tx_wait_complete(s->serial);
     s->stats.tx_cmds++;
     scanner_log(s, '>', cmd, strlen(cmd));
+    scanner_file_write(s, "TX> ", cmd, strlen(cmd));
 }
 
 void scanner_send_cmd(Scanner* s, const char* cmd) {
@@ -182,6 +225,7 @@ static bool scanner_open(Scanner* s, ScanSource source, const ScanConfig* cfg, b
     s->last_demo = furi_get_tick();
     s->ready_tick = furi_get_tick();
     s->bt_unsupported = false;
+    s->last_rx[0] = '\0';
     memset(&s->stats, 0, sizeof(s->stats));
     furi_stream_buffer_reset(s->rx);
 
@@ -205,6 +249,19 @@ static bool scanner_open(Scanner* s, ScanSource source, const ScanConfig* cfg, b
             furi_record_close(RECORD_EXPANSION);
             s->expansion = NULL;
             return false;
+        }
+
+        if(cfg->log_sd) {
+            scanner_file_open(s);
+            char head[64];
+            snprintf(
+                head,
+                sizeof(head),
+                "%s @%lu %s",
+                scanner_uart_name(cfg->uart),
+                (unsigned long)baud,
+                manual ? "(terminal)" : "(collect)");
+            scanner_file_write(s, "==== ", head, strlen(head));
         }
 
         furi_hal_serial_init(s->serial, baud);
@@ -252,6 +309,7 @@ void scanner_stop(Scanner* s) {
         furi_hal_serial_control_release(s->serial);
         s->serial = NULL;
     }
+    scanner_file_close(s);
     if(s->otg_enabled_by_us) {
         furi_hal_power_disable_otg();
         s->otg_enabled_by_us = false;
@@ -368,6 +426,9 @@ static bool scanner_handle_record(Scanner* s, char* rec, size_t len, ScanEvent* 
     rec[len] = '\0';
     s->stats.lines++;
     scanner_log(s, ' ', rec, len);
+    scanner_file_write(s, "", rec, len);
+    strncpy(s->last_rx, rec, sizeof(s->last_rx) - 1);
+    s->last_rx[sizeof(s->last_rx) - 1] = '\0';
     if(strstr(rec, "Bluetooth not supported")) {
         s->bt_unsupported = true;
         scanner_log(s, '#', "Board has no BT: skipping", 25);

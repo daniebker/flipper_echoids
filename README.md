@@ -118,6 +118,7 @@ the selected value. Changes are saved straight away.
 | Line end | `LF` or `CR+LF` after each command |
 | WiFi cmd / BT cmd | The Marauder commands used for scanning: `scanall` (current Marauder) or `scanap` (older Marauder), and `sniffbt` |
 | Bluetooth scan | Turns the Bluetooth half of the scan cycle on or off |
+| Log UART to SD | Appends all raw traffic to and from the board to `/ext/apps_data/echoids/uart_log.txt` (stops at 256 KB). Use this to capture what your board prints |
 | **UART terminal** | A live view of the raw UART traffic, for debugging |
 | **Auto-calibrate** | Tries every pin and baud combination and saves the one the board answers on |
 
@@ -133,6 +134,10 @@ the selected value. Changes are saved straight away.
 - **↑** switches the pins and **↓** steps through the baud rates. The UART reopens
   straight away and the change is saved.
 - **Hold OK** turns 5V on or off by hand.
+
+When Collect has found nothing yet, the screen shows what's happening instead of a list:
+a status line (`Board is silent`, `Garbled data: wrong baud?`, `Board talks, no networks`),
+the byte/line/AP/BT counters, and the last line the board sent.
 
 **What the terminal tells you:**
 
