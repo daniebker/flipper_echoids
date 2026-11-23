@@ -1,8 +1,10 @@
 /*
- * Generates docs/wiki/Types-and-Moves.md from the game's own tables, so the
- * wiki always matches the code.
+ * Generates the wiki pages from the game's own tables, so they always match
+ * the code:
  *
- *   cc -std=c11 -Isrc src/game.c tools/gen_wiki.c -o gen_wiki && ./gen_wiki > docs/wiki/Types-and-Moves.md
+ *   cc -std=c11 -Isrc src/game.c tools/gen_wiki.c -o gen_wiki
+ *   ./gen_wiki types > docs/wiki/Types.md
+ *   ./gen_wiki moves > docs/wiki/Types-and-Moves.md
  */
 #include "game.h"
 
@@ -21,7 +23,175 @@ static const char* anchor(uint8_t t) {
     return buf;
 }
 
-int main(void) {
+static uint8_t beats(uint8_t t) {
+    return (uint8_t)((t + 1) % ECHO_TYPE_COUNT);
+}
+
+static uint8_t beaten_by(uint8_t t) {
+    return (uint8_t)((t + ECHO_TYPE_COUNT - 1) % ECHO_TYPE_COUNT);
+}
+
+/* Flavour text, indexed by EchoType. */
+static const char* const type_about[ECHO_TYPE_COUNT] = {
+    "Water and currents. Tide echoids are often found on networks near the sea... or the kitchen sink.",
+    "Fire and heat. Fast-burning and aggressive.",
+    "Plants, roots and growth. Patient, and tougher than they look.",
+    "Earth, rock and metal. Slow to move and hard to move.",
+    "Electricity and lightning. The native element of every access point.",
+    "Wind and air. Quick, light and hard to pin down.",
+    "Sound, signals and radio waves. The echo in \"echoid\".",
+    "Shadow and emptiness. What's left between the signals.",
+};
+
+/* Why each type beats the next one in the cycle, indexed by the winner. */
+static const char* const type_why[ECHO_TYPE_COUNT] = {
+    "water douses fire",
+    "fire burns plants",
+    "roots crack rock",
+    "rock and earth ground electricity",
+    "lightning splits the wind",
+    "wind scatters and drowns out sound",
+    "a signal cuts through the emptiness",
+    "the abyss swallows the sea",
+};
+
+static void gen_types(void) {
+    printf("# Types\n\n");
+    printf("> Generated from the game code by `tools/gen_wiki.c`. Don't edit by hand: run the tool "
+           "again after changing types.\n\n");
+    printf("Every echoid has one of **%d types**, and so does every move. Types decide how much damage "
+           "a move does: a move of the right type does double damage, and the wrong type does half.\n\n",
+           ECHO_TYPE_COUNT);
+    printf("See also: [Types and Moves](Types-and-Moves.md) for every move and learnset.\n\n");
+    printf("## Contents\n\n- [The type cycle](#the-type-cycle)\n- [The types](#the-types)\n"
+           "- [The type matchup chart](#the-type-matchup-chart)\n"
+           "- [Strengths and weaknesses by type](#strengths-and-weaknesses-by-type)\n"
+           "- [Quick reference: what to use against each type](#quick-reference-what-to-use-against-each-type)\n"
+           "- [Types and learning moves](#types-and-learning-moves)\n- [Battle tips](#battle-tips)\n"
+           "- [Where an echoid's type comes from](#where-an-echoids-type-comes-from)\n\n");
+
+    /* Cycle */
+    printf("## The type cycle\n\nThe types form one loop. **Each type beats the next one**, and is "
+           "beaten by the one before it:\n\n");
+    printf("```mermaid\nflowchart LR\n");
+    for(uint8_t t = 0; t < ECHO_TYPE_COUNT; t++)
+        printf("    %s -->|beats| %s\n", echo_type_name(t), echo_type_name(beats(t)));
+    printf("```\n\n");
+    printf("In text: **");
+    for(uint8_t t = 0; t < ECHO_TYPE_COUNT; t++)
+        printf("%s → ", echo_type_name(t));
+    printf("%s**\n\n", echo_type_name(0));
+    printf("The reasoning behind each link:\n\n");
+    for(uint8_t t = 0; t < ECHO_TYPE_COUNT; t++)
+        printf("- **%s beats %s**: %s.\n", echo_type_name(t), echo_type_name(beats(t)), type_why[t]);
+    printf("\nBecause it's a single loop, every type has exactly **one type it beats**, **one type it's "
+           "weak to**, and is neutral against the other %d.\n\n", ECHO_TYPE_COUNT - 3);
+
+    /* Types */
+    printf("## The types\n\n");
+    printf("| Type | Short name | About | Species |\n|---|---|---|---|\n");
+    for(uint8_t t = 0; t < ECHO_TYPE_COUNT; t++)
+        printf("| **%s** | `%s` | %s | %s, %s, %s |\n", echo_type_name(t), echo_type_short(t), type_about[t],
+               species_name_of(t, 0), species_name_of(t, 1), species_name_of(t, 2));
+    printf("\nThe short name is what the Flipper's screens show (for example in the Collect list and the "
+           "move picker). Each type has three species; rarer echoids are more likely to be the later, "
+           "stronger-looking species.\n\n");
+
+    /* Chart */
+    printf("## The type matchup chart\n\n");
+    printf("Find the **move's type** on the left and the **defending echoid's type** along the top. "
+           "The cell is the damage multiplier.\n\n");
+    printf("| Move ↓ / Defender → |");
+    for(uint8_t d = 0; d < ECHO_TYPE_COUNT; d++)
+        printf(" %s |", echo_type_short(d));
+    printf("\n|---|");
+    for(uint8_t d = 0; d < ECHO_TYPE_COUNT; d++)
+        printf(":---:|");
+    printf("\n");
+    for(uint8_t a = 0; a < ECHO_TYPE_COUNT; a++) {
+        printf("| **%s** |", echo_type_name(a));
+        for(uint8_t d = 0; d < ECHO_TYPE_COUNT; d++) {
+            uint8_t m = echo_type_mult(a, d);
+            printf(" %s |", m > 100 ? "**2×**" : (m < 100 ? "½" : "·"));
+        }
+        printf("\n");
+    }
+    printf("\n**2×** = super effective (double damage) · **½** = not very effective (half damage) · "
+           "**·** = normal damage\n\n");
+    printf("Things to know:\n\n");
+    printf("- **Only the move's type and the defender's type matter.** The attacker's own type doesn't "
+           "change damage, so a Tide echoid using a Pulse move hits exactly like a Pulse echoid would.\n");
+    printf("- **A type is neutral against itself.** Tide moves do normal damage to Tide echoids.\n");
+    printf("- **Every move has a type**, so every attack in the game uses this chart.\n");
+    printf("- In battle, the move picker shows `x2` or `x.5` next to a move when it's super effective "
+           "or not very effective against the echoid you're fighting, and the battle log adds `x2!` or "
+           "`x.5` to the damage.\n\n");
+
+    /* Per type */
+    printf("## Strengths and weaknesses by type\n\n");
+    printf("| Type | Its moves do 2× to | Its moves do ½ to | Takes 2× from | Takes ½ from | Neutral (both ways) |\n");
+    printf("|---|---|---|---|---|---|\n");
+    for(uint8_t t = 0; t < ECHO_TYPE_COUNT; t++) {
+        char neutral[128] = "";
+        for(uint8_t o = 0; o < ECHO_TYPE_COUNT; o++) {
+            if(o == t || o == beats(t) || o == beaten_by(t)) continue;
+            if(neutral[0]) strcat(neutral, ", ");
+            strcat(neutral, echo_type_name(o));
+        }
+        printf("| **%s** | %s | %s | %s | %s | %s, %s (itself) |\n", echo_type_name(t),
+               echo_type_name(beats(t)), echo_type_name(beaten_by(t)), echo_type_name(beaten_by(t)),
+               echo_type_name(beats(t)), neutral, echo_type_name(t));
+    }
+    printf("\nNotice the symmetry: a type's moves are weak against the very type that beats it, and it "
+           "shrugs off moves from the type it beats. For example Tide moves do only half damage to Void "
+           "(which beats Tide), and Ember moves do only half damage to Tide.\n\n");
+
+    /* Quick reference */
+    printf("## Quick reference: what to use against each type\n\n");
+    printf("| Facing a… | Attack with… | Avoid attacking with… | Its moves will hurt… |\n|---|---|---|---|\n");
+    for(uint8_t d = 0; d < ECHO_TYPE_COUNT; d++)
+        printf("| **%s** | %s moves (2×) | %s moves (½) | %s echoids (2×) |\n", echo_type_name(d),
+               echo_type_name(beaten_by(d)), echo_type_name(beats(d)), echo_type_name(beats(d)));
+    printf("\n");
+
+    /* Learning */
+    printf("## Types and learning moves\n\n");
+    printf("An echoid can **never** learn moves of its two *opposed* types: the type it beats and "
+           "the type that beats it. Everything else is possible, but each species only learns "
+           "the moves in its own learnset.\n\n");
+    printf("| Type | Can never learn |\n|---|---|\n");
+    for(uint8_t t = 0; t < ECHO_TYPE_COUNT; t++)
+        printf("| %s | %s or %s moves |\n", echo_type_name(t), echo_type_name(beats(t)),
+               echo_type_name(beaten_by(t)));
+    printf("\nMost of an echoid's moves are its own type. On top of that, every echoid learns "
+           "**counter moves**, of the type that beats whatever beats it (for example Tide is beaten by "
+           "Void, Void is beaten by Pulse, so Tide echoids learn Pulse moves). They also learn a "
+           "**species move** whose type depends on the species. So your echoid usually has an answer "
+           "to the type that threatens it. Full learnsets: [Types and Moves](Types-and-Moves.md).\n\n");
+
+    /* Tips */
+    printf("## Battle tips\n\n");
+    printf("- **Check the Collect panel before you fight.** It shows the wild echoid's type, so you know "
+           "which of your moves will be `x2`.\n");
+    printf("- **Use your counter moves.** If a wild echoid's type beats yours, your counter move is "
+           "probably super effective against it.\n");
+    printf("- **Switch when you're outmatched.** Use **Swap** to send in a team member whose moves beat "
+           "the wild echoid. Switching costs your turn, so the wild echoid gets an attack on the newcomer.\n");
+    printf("- **Wild echoids play the chart too.** They usually pick their most damaging move against "
+           "your echoid, so expect super effective hits if their type beats yours.\n");
+    printf("- **Build a mixed team.** With up to %d echoids in your team, covering several types means "
+           "you'll always have someone to switch to.\n\n", PARTY_MAX);
+
+    /* Source */
+    printf("## Where an echoid's type comes from\n\n");
+    printf("An echoid's type, like its species, rarity and stats, is worked out from a MAC address, "
+           "so it never changes. Wild echoids come from the MAC address (BSSID) of a WiFi access "
+           "point, and your starter comes from your Flipper's own Bluetooth MAC. The same access "
+           "point is always the same echoid, with the same type. All %d types are equally common.\n",
+           ECHO_TYPE_COUNT);
+}
+
+static void gen_moves(void) {
     printf("# Types and Moves\n\n");
     printf("> Generated from the game code by `tools/gen_wiki.c`. Don't edit by hand: run the tool again "
            "after changing moves or types.\n\n");
@@ -190,5 +360,12 @@ int main(void) {
         printf("\n");
         (void)anchor;
     }
+}
+
+int main(int argc, char** argv) {
+    if(argc > 1 && strcmp(argv[1], "types") == 0)
+        gen_types();
+    else
+        gen_moves();
     return 0;
 }

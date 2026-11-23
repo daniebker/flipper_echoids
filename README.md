@@ -75,6 +75,10 @@ from a fixed pool of fake devices, so you can play and test without hardware.
 
 ### Types
 
+The **[Types wiki page](docs/wiki/Types.md)** explains every type, the type cycle and the
+full matchup chart, with a quick reference for what to use against each type.
+
+
 Moves do 2× damage to the next type in the cycle and ½ damage to the type before it:
 
 `Tide → Ember → Flora → Stone → Spark → Gale → Pulse → Void → Tide`
@@ -269,13 +273,21 @@ ufbt launch
 GitHub Actions also builds the `.fap` for the release and dev firmware channels, and the
 built files can be downloaded from each workflow run.
 
-### Wiki page
+### Wiki pages
 
-`docs/wiki/Types-and-Moves.md` is generated from the game's tables. After changing moves or
-types, regenerate it (CI fails if it's out of date):
+`docs/wiki/Types.md` and `docs/wiki/Types-and-Moves.md` are generated from the game's tables.
+After changing moves or types, regenerate them (CI fails if they're out of date):
 
 ```bash
-cc -std=c11 -Isrc src/game.c tools/gen_wiki.c -o gen_wiki && ./gen_wiki > docs/wiki/Types-and-Moves.md
+cc -std=c11 -Isrc src/game.c tools/gen_wiki.c -o gen_wiki
+```
+
+```bash
+./gen_wiki types > docs/wiki/Types.md
+```
+
+```bash
+./gen_wiki moves > docs/wiki/Types-and-Moves.md
 ```
 
 ### Tests
@@ -299,6 +311,6 @@ src/scanner_parse.c    Marauder / CSV line parser (no SDK)
 src/save.[ch]          Save file (team, items, settings) and upgrades from old versions
 src/pac_store.[ch]     PAC storage file on the SD card (unlimited stored echoids)
 tests/test_game.c      Host-side unit tests
-tools/gen_wiki.c       Generates docs/wiki/Types-and-Moves.md from the game tables
-docs/wiki/             Wiki pages (Types and Moves)
+tools/gen_wiki.c       Generates the wiki pages from the game tables
+docs/wiki/             Wiki: Home, Types, Types and Moves
 ```
