@@ -81,6 +81,7 @@ typedef struct {
 
     Screen screen;
     uint8_t menu_idx;
+    uint8_t menu_scroll;
 
     Nearby nearby[NEARBY_MAX];
     uint8_t nearby_count;
@@ -343,8 +344,17 @@ static void draw_toast(App* app, Canvas* canvas) {
 /* Screens: drawing                                                          */
 /* ------------------------------------------------------------------------- */
 
-static const char* const menu_items[] = {"Collect", "Team", "Craft", "Bag", "Settings"};
+enum {
+    MenuCollect,
+    MenuTeam,
+    MenuPac,
+    MenuCraft,
+    MenuBag,
+    MenuSettings,
+};
+static const char* const menu_items[] = {"Collect", "Team", "PAC", "Craft", "Bag", "Settings"};
 #define MENU_COUNT (sizeof(menu_items) / sizeof(menu_items[0]))
+#define MENU_ROWS  5
 
 static void draw_intro(App* app, Canvas* canvas) {
     Echoid* e = app_lead(app);
@@ -368,13 +378,22 @@ static void draw_menu(App* app, Canvas* canvas) {
     EchoStats s;
     echo_stats(e, &s);
     draw_title(canvas, "Echoids", NULL);
-    for(size_t i = 0; i < MENU_COUNT; i++) {
-        int y = 23 + (int)i * 10;
-        /* Stop short of the lead echoid panel (divider at x=84). */
-        draw_row_w(canvas, y, i == app->menu_idx, 83);
+    for(uint8_t row = 0; row < MENU_ROWS; row++) {
+        uint8_t i = app->menu_scroll + row;
+        if(i >= MENU_COUNT) break;
+        int y = 23 + row * 10;
+        /* Stop short of the scrollbar and the lead echoid panel (divider at x=84). */
+        draw_row_w(canvas, y, i == app->menu_idx, 79);
         canvas_draw_str(canvas, 4, y, menu_items[i]);
+        if(i == MenuPac) {
+            /* How many echoids are in storage */
+            char n[12];
+            snprintf(n, sizeof(n), "%lu", (unsigned long)app->save.pac_count);
+            canvas_draw_str_aligned(canvas, 76, y, AlignRight, AlignBottom, n);
+        }
     }
     canvas_set_color(canvas, ColorBlack);
+    elements_scrollbar_pos(canvas, 82, 14, 49, app->menu_idx, MENU_COUNT);
     /* Lead echoid panel */
     canvas_draw_line(canvas, 84, 13, 84, 63);
     draw_sprite(canvas, e->mac, 90, 15, 2);
@@ -707,7 +726,7 @@ static void draw_team(App* app, Canvas* canvas) {
         draw_roster(
             app,
             canvas,
-            "PAC",
+            "Cold PAC",
             buf,
             app->pac_page,
             app->pac_page_valid ? app->pac_page_n : 0,
@@ -1945,23 +1964,25 @@ static void handle_input(App* app, InputEvent* ev) {
 
     case ScreenMenu:
         if(dy) {
-            int n = (int)app->menu_idx + dy;
-            app->menu_idx = (uint8_t)((n + (int)MENU_COUNT) % (int)MENU_COUNT);
+            list_move(&app->menu_idx, &app->menu_scroll, MENU_COUNT, MENU_ROWS, dy);
         } else if(press && ev->key == InputKeyOk) {
             switch(app->menu_idx) {
-            case 0:
+            case MenuCollect:
                 collect_start(app);
                 break;
-            case 1:
+            case MenuTeam:
                 team_open(app, 0, app->save.lead);
                 break;
-            case 2:
+            case MenuPac:
+                team_open(app, 1, 0); /* straight to Cold PAC Storage */
+                break;
+            case MenuCraft:
                 app->screen = ScreenCraft;
                 break;
-            case 3:
+            case MenuBag:
                 app->screen = ScreenBag;
                 break;
-            case 4:
+            case MenuSettings:
                 app->confirm_reset = false;
                 app->screen = ScreenSettings;
                 break;
