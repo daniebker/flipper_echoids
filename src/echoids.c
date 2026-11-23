@@ -48,6 +48,7 @@ typedef enum {
     ScreenCalibrate,
     ScreenUseOn, /* pick which echoid a Tonic / Crystal is used on */
     ScreenSwap, /* pick a team member to swap out for a PAC echoid */
+    ScreenMovePick, /* battle: choose one of the lead's moves */
 } Screen;
 
 typedef enum {
@@ -90,6 +91,8 @@ typedef struct {
     Battle battle;
     int8_t battle_nearby;
     uint8_t battle_menu;
+    uint8_t move_idx;
+    bool detail_moves; /* detail screen shows the Moves page */
     uint8_t ball_idx;
 
     /* Team screen: tab 0 = team, 1 = PAC. Indexes are positions in that list. */
@@ -563,20 +566,50 @@ static void draw_battle(App* app, Canvas* canvas) {
     canvas_draw_str(canvas, 0, 55, b->log[1]);
 
     if(b->result == BattleOngoing) {
-        static const char* const opts[] = {"Hit", "Skill", "Ball", "Run"};
-        for(int i = 0; i < 4; i++) {
-            int x = i * 32;
+        static const char* const opts[] = {"Hit", "Ball", "Run"};
+        for(int i = 0; i < 3; i++) {
+            int x = i * 43;
+            int w = i == 2 ? 42 : 43;
             if(i == app->battle_menu) {
-                canvas_draw_box(canvas, x, 56, 32, 8);
+                canvas_draw_box(canvas, x, 56, w, 8);
                 canvas_set_color(canvas, ColorWhite);
             }
-            canvas_draw_str_aligned(canvas, x + 16, 63, AlignCenter, AlignBottom, opts[i]);
+            canvas_draw_str_aligned(canvas, x + w / 2, 63, AlignCenter, AlignBottom, opts[i]);
             canvas_set_color(canvas, ColorBlack);
         }
     } else {
         canvas_draw_box(canvas, 0, 56, 128, 8);
         canvas_set_color(canvas, ColorWhite);
         canvas_draw_str_aligned(canvas, 64, 63, AlignCenter, AlignBottom, "OK: continue");
+        canvas_set_color(canvas, ColorBlack);
+    }
+}
+
+static void draw_move_pick(App* app, Canvas* canvas) {
+    draw_battle(app, canvas);
+    Move moves[MAX_MOVES];
+    uint8_t n = echo_moves(app->battle.mine, moves);
+    EchoGenes gw;
+    echo_genes(app->battle.wild.mac, &gw);
+    canvas_set_color(canvas, ColorWhite);
+    canvas_draw_box(canvas, 6, 6, 116, 48);
+    canvas_set_color(canvas, ColorBlack);
+    canvas_draw_rframe(canvas, 6, 6, 116, 48, 3);
+    canvas_set_font(canvas, FontSecondary);
+    for(uint8_t i = 0; i < n; i++) {
+        int y = 17 + i * 10;
+        char buf[16];
+        if(i == app->move_idx) {
+            canvas_draw_box(canvas, 8, y - 8, 112, 10);
+            canvas_set_color(canvas, ColorWhite);
+        }
+        canvas_draw_str(canvas, 10, y, moves[i].name);
+        /* How it fares against this wild echoid */
+        uint8_t mult = moves[i].type == MOVE_NEUTRAL ? 100 : echo_type_mult(moves[i].type, gw.type);
+        canvas_draw_str(canvas, 72, y, mult > 100 ? "x2" : (mult < 100 ? "x.5" : ""));
+        canvas_draw_str(canvas, 86, y, move_type_short(&moves[i]));
+        snprintf(buf, sizeof(buf), "%u", moves[i].power);
+        canvas_draw_str_aligned(canvas, 118, y, AlignRight, AlignBottom, buf);
         canvas_set_color(canvas, ColorBlack);
     }
 }
@@ -751,9 +784,34 @@ static void draw_detail(App* app, Canvas* canvas) {
     canvas_draw_str(canvas, 36, 37, buf);
     snprintf(buf, sizeof(buf), "A%u D%u S%u", s.atk, s.def, s.spd);
     canvas_draw_str(canvas, 36, 46, buf);
-    snprintf(buf, sizeof(buf), "From: %.20s", e->origin);
-    canvas_draw_str(canvas, 0, 54, buf);
-    canvas_draw_str(canvas, 0, 63, "OK: actions  <> browse");
+    if(app->detail_moves) {
+        /* Moves page replaces the stats area. */
+        canvas_set_color(canvas, ColorWhite);
+        canvas_draw_box(canvas, 35, 11, 93, 53);
+        canvas_draw_box(canvas, 0, 46, 128, 18);
+        canvas_set_color(canvas, ColorBlack);
+        Move moves[MAX_MOVES];
+        uint8_t n = echo_moves(e, moves);
+        for(uint8_t i = 0; i < n; i++) {
+            int y = 19 + i * 9;
+            canvas_draw_str(canvas, 36, y, moves[i].name);
+            /* Power only: "Event Horizon" plus a type would not fit. */
+            snprintf(buf, sizeof(buf), "%u", moves[i].power);
+            canvas_draw_str_aligned(canvas, 127, y, AlignRight, AlignBottom, buf);
+        }
+        uint8_t at = 0;
+        const Move* next = echo_next_move(e, &at);
+        if(next)
+            snprintf(buf, sizeof(buf), "Next: %s at Lv%u", next->name, at);
+        else
+            snprintf(buf, sizeof(buf), "Knows its final moves");
+        canvas_draw_str(canvas, 0, 55, buf);
+        canvas_draw_str(canvas, 0, 63, "^v stats  OK actions");
+    } else {
+        snprintf(buf, sizeof(buf), "From: %.20s", e->origin);
+        canvas_draw_str(canvas, 0, 54, buf);
+        canvas_draw_str(canvas, 0, 63, "^v moves  OK actions");
+    }
 
     if(app->detail_menu) {
         const char* const* opts = app->team_tab == 0 ? detail_team_actions : detail_pac_actions;
@@ -893,7 +951,10 @@ static const char* const help_lines[] = {
     "Types: each beats the next",
     "Tide>Ember>Flora>Stone>",
     "Spark>Gale>Pulse>Void>Tide",
-    "Skills use type, Hit doesn't.",
+    "Hit: pick one of up to 4",
+    "moves. New moves come with",
+    "levels (max Lv100). Typed",
+    "moves use the type chart.",
     "",
     "Team holds 6 echoids; new",
     "catches beyond that go to",
@@ -955,6 +1016,9 @@ static void draw_callback(Canvas* canvas, void* ctx) {
         break;
     case ScreenBallPick:
         draw_ball_pick(app, canvas);
+        break;
+    case ScreenMovePick:
+        draw_move_pick(app, canvas);
         break;
     case ScreenTeam:
         draw_team(app, canvas);
@@ -1654,6 +1718,15 @@ static void battle_after_action(App* app) {
             snprintf(msg, sizeof(msg), "+%lu XP", (unsigned long)b->xp_gained);
         }
         battle_log_line(b, msg);
+        /* Announce moves learned on the way up (the newest shows last). */
+        for(uint16_t lv = (uint16_t)b->level_before + 1; lv <= b->mine->level; lv++) {
+            const Move* m = echo_move_learned_at(b->mine->mac, (uint8_t)lv);
+            if(m) {
+                snprintf(msg, sizeof(msg), "Learned %s!", m->name);
+                battle_log_line(b, msg);
+                notification_message(app->notif, &sequence_success);
+            }
+        }
     }
     app->dirty = true;
 }
@@ -1687,8 +1760,16 @@ static bool use_item_on(App* app, uint8_t item, Echoid* target) {
         }
         inv->items[item]--;
         uint16_t xp = echo_xp_to_next(target->level) / 2;
+        uint8_t before = target->level;
         uint8_t lv = echo_add_xp(target, xp);
-        if(lv)
+        const Move* learned = NULL;
+        for(uint16_t l = (uint16_t)before + 1; l <= target->level; l++) {
+            const Move* m = echo_move_learned_at(target->mac, (uint8_t)l);
+            if(m) learned = m;
+        }
+        if(learned)
+            snprintf(msg, sizeof(msg), "Lv%u! Learned %s", target->level, learned->name);
+        else if(lv)
             snprintf(msg, sizeof(msg), "%s +%u XP! Lv%u", name, xp, target->level);
         else
             snprintf(msg, sizeof(msg), "%s +%u XP", name, xp);
@@ -1840,6 +1921,8 @@ static void detail_input(App* app, InputEvent* ev, bool press, int dy) {
             pac_view_load(app);
             pac_refresh(app);
         }
+    } else if(dy) {
+        app->detail_moves = !app->detail_moves; /* Stats <-> Moves page */
     } else if(press && ev->key == InputKeyOk) {
         app->detail_menu = true;
         app->detail_menu_idx = 0;
@@ -1906,30 +1989,44 @@ static void handle_input(App* app, InputEvent* ev) {
             }
             break;
         }
-        if(press && ev->key == InputKeyLeft) app->battle_menu = (app->battle_menu + 3) % 4;
-        if(press && ev->key == InputKeyRight) app->battle_menu = (app->battle_menu + 1) % 4;
+        if(press && ev->key == InputKeyLeft) app->battle_menu = (app->battle_menu + 2) % 3;
+        if(press && ev->key == InputKeyRight) app->battle_menu = (app->battle_menu + 1) % 3;
         if(press && ev->key == InputKeyOk) {
             switch(app->battle_menu) {
-            case 0:
-                battle_attack(&app->battle, false);
+            case 0: {
+                Move moves[MAX_MOVES];
+                if(app->move_idx >= echo_moves(app->battle.mine, moves)) app->move_idx = 0;
+                app->screen = ScreenMovePick;
                 break;
+            }
             case 1:
-                battle_attack(&app->battle, true);
-                break;
-            case 2:
                 if(app->save.team_count >= PARTY_MAX && !pac_has_room(app)) {
                     battle_log_line(&app->battle, "No room: craft a PAC!");
                 } else {
                     app->screen = ScreenBallPick;
                 }
                 break;
-            case 3:
+            case 2:
                 battle_flee(&app->battle);
                 break;
             }
             battle_after_action(app);
         }
         break;
+
+    case ScreenMovePick: {
+        Move moves[MAX_MOVES];
+        uint8_t n = echo_moves(app->battle.mine, moves);
+        if(dy && n) app->move_idx = (uint8_t)((app->move_idx + n + dy) % n);
+        if(press && ev->key == InputKeyBack) app->screen = ScreenBattle;
+        if(press && ev->key == InputKeyOk) {
+            /* The move stays selected for next turn. */
+            battle_attack(&app->battle, app->move_idx);
+            app->screen = ScreenBattle;
+            battle_after_action(app);
+        }
+        break;
+    }
 
     case ScreenBallPick:
         if(dy) app->ball_idx = (uint8_t)((app->ball_idx + 3 + dy) % 3);

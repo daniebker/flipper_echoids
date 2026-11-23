@@ -50,16 +50,91 @@ static const char* const type_names[ECHO_TYPE_COUNT] =
 static const char* const type_short[ECHO_TYPE_COUNT] =
     {"TID", "EMB", "FLO", "STN", "SPK", "GAL", "PLS", "VOI"};
 
-static const char* const skill_names[ECHO_TYPE_COUNT] = {
-    "Tidal Lash",
-    "Cinder Burst",
-    "Thorn Volley",
-    "Rock Slam",
-    "Arc Bolt",
-    "Gust Blade",
-    "Ping Wave",
-    "Null Bite",
+/* ---- Moves ---- */
+
+#define TYPED_MOVES 6
+/* Six moves per type, weakest first. */
+static const Move typed_moves[ECHO_TYPE_COUNT][TYPED_MOVES] = {
+    {{"Splash Jab", EchoTypeTide, 45, 100},
+     {"Bubble Shot", EchoTypeTide, 55, 95},
+     {"Tidal Lash", EchoTypeTide, 70, 90},
+     {"Riptide", EchoTypeTide, 85, 85},
+     {"Maelstrom", EchoTypeTide, 100, 85},
+     {"Tsunami", EchoTypeTide, 120, 75}},
+    {{"Cinder Flick", EchoTypeEmber, 45, 100},
+     {"Flame Lick", EchoTypeEmber, 55, 95},
+     {"Cinder Burst", EchoTypeEmber, 70, 90},
+     {"Blaze Rush", EchoTypeEmber, 85, 85},
+     {"Inferno", EchoTypeEmber, 100, 85},
+     {"Supernova", EchoTypeEmber, 120, 75}},
+    {{"Vine Tap", EchoTypeFlora, 45, 100},
+     {"Seed Spit", EchoTypeFlora, 55, 95},
+     {"Thorn Volley", EchoTypeFlora, 70, 90},
+     {"Root Crush", EchoTypeFlora, 85, 85},
+     {"Bloom Storm", EchoTypeFlora, 100, 85},
+     {"World Tree", EchoTypeFlora, 120, 75}},
+    {{"Pebble Toss", EchoTypeStone, 45, 100},
+     {"Rock Throw", EchoTypeStone, 55, 95},
+     {"Rock Slam", EchoTypeStone, 70, 90},
+     {"Quake", EchoTypeStone, 85, 85},
+     {"Landslide", EchoTypeStone, 100, 85},
+     {"Tectonic", EchoTypeStone, 120, 75}},
+    {{"Zap", EchoTypeSpark, 45, 100},
+     {"Shock Dart", EchoTypeSpark, 55, 95},
+     {"Arc Bolt", EchoTypeSpark, 70, 90},
+     {"Thunderclap", EchoTypeSpark, 85, 85},
+     {"Plasma Lance", EchoTypeSpark, 100, 85},
+     {"Megavolt", EchoTypeSpark, 120, 75}},
+    {{"Breeze", EchoTypeGale, 45, 100},
+     {"Air Slice", EchoTypeGale, 55, 95},
+     {"Gust Blade", EchoTypeGale, 70, 90},
+     {"Cyclone", EchoTypeGale, 85, 85},
+     {"Tempest", EchoTypeGale, 100, 85},
+     {"Jetstream", EchoTypeGale, 120, 75}},
+    {{"Ping", EchoTypePulse, 45, 100},
+     {"Echo Beam", EchoTypePulse, 55, 95},
+     {"Ping Wave", EchoTypePulse, 70, 90},
+     {"Resonance", EchoTypePulse, 85, 85},
+     {"Feedback", EchoTypePulse, 100, 85},
+     {"Sonic Rupture", EchoTypePulse, 120, 75}},
+    {{"Shade Nip", EchoTypeVoid, 45, 100},
+     {"Null Bite", EchoTypeVoid, 55, 95},
+     {"Gloom Claw", EchoTypeVoid, 70, 90},
+     {"Eclipse Fang", EchoTypeVoid, 85, 85},
+     {"Abyss Gaze", EchoTypeVoid, 100, 85},
+     {"Event Horizon", EchoTypeVoid, 120, 75}},
 };
+
+/* Untyped moves every echoid learns. */
+static const Move neutral_moves[3] = {
+    {"Strike", MOVE_NEUTRAL, 40, 100},
+    {"Rush", MOVE_NEUTRAL, 65, 90},
+    {"Echo Burst", MOVE_NEUTRAL, 95, 80},
+};
+
+/* When moves are learned: level, then typed move index or -(neutral index + 1). */
+typedef struct {
+    uint8_t level;
+    int8_t move;
+} LearnStep;
+
+static const LearnStep learnset[] = {
+    {1, -1}, /* Strike */
+    {1, 0},
+    {8, 1},
+    {16, -2}, /* Rush */
+    {25, 2},
+    {38, 3},
+    {52, 4},
+    {66, -3}, /* Echo Burst */
+    {82, 5},
+};
+#define LEARNSET_LEN (sizeof(learnset) / sizeof(learnset[0]))
+
+static const Move* learn_step_move(uint8_t type, const LearnStep* st) {
+    if(st->move < 0) return &neutral_moves[-st->move - 1];
+    return &typed_moves[type % ECHO_TYPE_COUNT][st->move];
+}
 
 #define SPECIES_PER_TYPE 3
 static const char* const species_names[ECHO_TYPE_COUNT][SPECIES_PER_TYPE] = {
@@ -86,9 +161,6 @@ const char* echo_type_name(uint8_t type) {
 }
 const char* echo_type_short(uint8_t type) {
     return type_short[type % ECHO_TYPE_COUNT];
-}
-const char* echo_skill_name(uint8_t type) {
-    return skill_names[type % ECHO_TYPE_COUNT];
 }
 const char* echo_rarity_name(uint8_t rarity) {
     return rarity_names[rarity % RarityCount];
@@ -153,6 +225,44 @@ const char* echo_species_name(const uint8_t mac[6]) {
     EchoGenes g;
     echo_genes(mac, &g);
     return species_names[g.type][g.species];
+}
+
+uint8_t echo_moves(const Echoid* e, Move out[MAX_MOVES]) {
+    EchoGenes g;
+    echo_genes(e->mac, &g);
+    size_t learned = 0;
+    while(learned < LEARNSET_LEN && learnset[learned].level <= e->level)
+        learned++;
+    size_t first = learned > MAX_MOVES ? learned - MAX_MOVES : 0;
+    uint8_t n = 0;
+    for(size_t i = first; i < learned; i++)
+        out[n++] = *learn_step_move(g.type, &learnset[i]);
+    return n;
+}
+
+const Move* echo_move_learned_at(const uint8_t mac[6], uint8_t level) {
+    if(level <= 1) return NULL;
+    EchoGenes g;
+    echo_genes(mac, &g);
+    for(size_t i = 0; i < LEARNSET_LEN; i++)
+        if(learnset[i].level == level) return learn_step_move(g.type, &learnset[i]);
+    return NULL;
+}
+
+const Move* echo_next_move(const Echoid* e, uint8_t* at_level) {
+    EchoGenes g;
+    echo_genes(e->mac, &g);
+    for(size_t i = 0; i < LEARNSET_LEN; i++) {
+        if(learnset[i].level > e->level) {
+            if(at_level) *at_level = learnset[i].level;
+            return learn_step_move(g.type, &learnset[i]);
+        }
+    }
+    return NULL;
+}
+
+const char* move_type_short(const Move* m) {
+    return m->type == MOVE_NEUTRAL ? "---" : echo_type_short(m->type);
 }
 
 Shard shard_from_mac(const uint8_t mac[6]) {
@@ -224,7 +334,7 @@ static uint16_t grow(uint8_t base, uint8_t level, uint8_t per_level) {
 void echo_stats(const Echoid* e, EchoStats* out) {
     EchoGenes g;
     echo_genes(e->mac, &g);
-    out->max_hp = grow(g.base_hp, e->level, 2);
+    out->max_hp = grow(g.base_hp, e->level, 4);
     out->atk = grow(g.base_atk, e->level, 1);
     out->def = grow(g.base_def, e->level, 1);
     out->spd = grow(g.base_spd, e->level, 1);
@@ -518,10 +628,9 @@ void battle_start(Battle* b, Echoid* mine, const uint8_t mac[6], uint8_t level, 
     battle_log(b, msg);
 }
 
-/* Performs one attack. Returns true if the defender fainted. */
-static bool do_attack(Battle* b, Echoid* atk, Echoid* def, bool skill, bool is_player) {
-    EchoGenes ga, gd;
-    echo_genes(atk->mac, &ga);
+/* Performs one attack with a move. Returns true if the defender fainted. */
+static bool do_attack(Battle* b, Echoid* atk, Echoid* def, const Move* mv, bool is_player) {
+    EchoGenes gd;
     echo_genes(def->mac, &gd);
     EchoStats sa, sd;
     echo_stats(atk, &sa);
@@ -530,16 +639,14 @@ static bool do_attack(Battle* b, Echoid* atk, Echoid* def, bool skill, bool is_p
     const char* who = is_player ? "You" : "Foe";
     char msg[BATTLE_LOG_LEN];
 
-    uint8_t power = skill ? 65 : 40;
-    uint8_t accuracy = skill ? 85 : 100;
-    if(game_rand_range(100) >= accuracy) {
-        snprintf(msg, sizeof(msg), "%s %s missed", who, skill ? echo_skill_name(ga.type) : "Strike");
+    if(game_rand_range(100) >= mv->accuracy) {
+        snprintf(msg, sizeof(msg), "%s %s missed", who, mv->name);
         battle_log(b, msg);
         return false;
     }
 
-    uint32_t dmg = ((2u * atk->level / 5u + 2u) * power * sa.atk / (sd.def ? sd.def : 1)) / 26u + 2u;
-    uint8_t mult = skill ? echo_type_mult(ga.type, gd.type) : 100;
+    uint32_t dmg = ((2u * atk->level / 5u + 2u) * mv->power * sa.atk / (sd.def ? sd.def : 1)) / 26u + 2u;
+    uint8_t mult = mv->type == MOVE_NEUTRAL ? 100 : echo_type_mult(mv->type, gd.type);
     dmg = dmg * mult / 100u;
     dmg = dmg * (85u + game_rand_range(16)) / 100u;
     if(dmg < 1) dmg = 1;
@@ -547,14 +654,7 @@ static bool do_attack(Battle* b, Echoid* atk, Echoid* def, bool skill, bool is_p
     def->hp = dmg >= def->hp ? 0 : (uint16_t)(def->hp - dmg);
 
     const char* eff = mult > 100 ? " x2!" : (mult < 100 ? " x.5" : "");
-    snprintf(
-        msg,
-        sizeof(msg),
-        "%s %s -%lu%s",
-        who,
-        skill ? echo_skill_name(ga.type) : "Strike",
-        (unsigned long)dmg,
-        eff);
+    snprintf(msg, sizeof(msg), "%s %s -%lu%s", who, mv->name, (unsigned long)dmg, eff);
     battle_log(b, msg);
     return def->hp == 0;
 }
@@ -566,38 +666,64 @@ static void award_xp(Battle* b, bool captured) {
     xp = xp * (100u + 25u * g.rarity) / 100u;
     if(captured) xp = xp * 3u / 2u;
     b->xp_gained = xp;
+    b->level_before = b->mine->level;
     b->levels_gained = echo_add_xp(b->mine, xp);
+}
+
+/* Wild echoids mostly pick their best move against you, sometimes any move. */
+static uint8_t enemy_pick_move(Battle* b, const Move* moves, uint8_t n) {
+    if(n <= 1 || game_rand_range(100) < 30) return (uint8_t)game_rand_range(n);
+    EchoGenes gm;
+    echo_genes(b->mine->mac, &gm);
+    uint8_t best = 0;
+    uint32_t best_score = 0;
+    for(uint8_t i = 0; i < n; i++) {
+        uint32_t mult = moves[i].type == MOVE_NEUTRAL ? 100 : echo_type_mult(moves[i].type, gm.type);
+        uint32_t score = (uint32_t)moves[i].power * moves[i].accuracy * mult;
+        if(score > best_score) {
+            best_score = score;
+            best = i;
+        }
+    }
+    return best;
 }
 
 static void enemy_turn(Battle* b) {
     if(b->result != BattleOngoing) return;
-    bool skill = game_rand_range(100) < 40;
-    if(do_attack(b, &b->wild, b->mine, skill, false)) {
+    Move moves[MAX_MOVES];
+    uint8_t n = echo_moves(&b->wild, moves);
+    if(n == 0) return;
+    if(do_attack(b, &b->wild, b->mine, &moves[enemy_pick_move(b, moves, n)], false)) {
         b->result = BattleLost;
         battle_log(b, "Your echoid fainted!");
     }
 }
 
-static void player_attack(Battle* b, bool skill) {
+static void player_attack(Battle* b, const Move* mv) {
     if(b->result != BattleOngoing) return;
-    if(do_attack(b, b->mine, &b->wild, skill, true)) {
+    if(do_attack(b, b->mine, &b->wild, mv, true)) {
         b->result = BattleWon;
         award_xp(b, false);
         battle_log(b, "The wild echoid fled!");
     }
 }
 
-void battle_attack(Battle* b, bool skill) {
+void battle_attack(Battle* b, uint8_t slot) {
     if(b->result != BattleOngoing) return;
+    Move moves[MAX_MOVES];
+    uint8_t n = echo_moves(b->mine, moves);
+    if(n == 0) return;
+    if(slot >= n) slot = 0;
+    Move mv = moves[slot];
     EchoStats sm, sw;
     echo_stats(b->mine, &sm);
     echo_stats(&b->wild, &sw);
     if(sm.spd >= sw.spd) {
-        player_attack(b, skill);
+        player_attack(b, &mv);
         enemy_turn(b);
     } else {
         enemy_turn(b);
-        player_attack(b, skill);
+        player_attack(b, &mv);
     }
 }
 

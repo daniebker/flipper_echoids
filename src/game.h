@@ -16,7 +16,7 @@
 #define PARTY_MAX        6 /* echoids carried in the team */
 #define PAC_SIZE         10 /* echoids stored per crafted PAC (no limit on PACs) */
 #define ECHO_FLAG_PARTY  0x01 /* Echoid.flags: in the team (else in the PAC) */
-#define MAX_LEVEL        50
+#define MAX_LEVEL        100
 #define NAME_LEN         18
 #define SPRITE_SIZE      16
 
@@ -107,7 +107,26 @@ const char* echo_species_name(const uint8_t mac[6]);
 const char* echo_type_name(uint8_t type);
 const char* echo_type_short(uint8_t type);
 const char* echo_rarity_name(uint8_t rarity);
-const char* echo_skill_name(uint8_t type);
+/* ---------- Moves ---------- */
+#define MAX_MOVES    4 /* moves an echoid can use at once */
+#define MOVE_NEUTRAL ECHO_TYPE_COUNT /* Move.type for untyped moves */
+
+typedef struct {
+    const char* name;
+    uint8_t type; /* EchoType, or MOVE_NEUTRAL (no type matchups) */
+    uint8_t power;
+    uint8_t accuracy; /* percent */
+} Move;
+
+/* The moves an echoid knows at its level: the MAX_MOVES most recently
+ * learned, oldest first (later moves are stronger). Returns the count. */
+uint8_t echo_moves(const Echoid* e, Move out[MAX_MOVES]);
+/* The move learned on reaching exactly this level, or NULL. Level 1 moves
+ * are known from the start and not reported. */
+const Move* echo_move_learned_at(const uint8_t mac[6], uint8_t level);
+/* The next move this echoid will learn, and at which level (NULL if none). */
+const Move* echo_next_move(const Echoid* e, uint8_t* at_level);
+const char* move_type_short(const Move* m);
 const char* shard_tier_name(uint8_t tier);
 const char* item_name(uint8_t item);
 Shard shard_from_mac(const uint8_t mac[6]);
@@ -200,13 +219,15 @@ typedef struct {
     Echoid* mine;
     Echoid wild;
     uint8_t result;
+    uint8_t level_before; /* player's level before XP was awarded */
     uint8_t levels_gained;
     uint32_t xp_gained;
     char log[BATTLE_LOG_LINES][BATTLE_LOG_LEN];
 } Battle;
 
 void battle_start(Battle* b, Echoid* mine, const uint8_t mac[6], uint8_t level, const char* ssid);
-void battle_attack(Battle* b, bool skill);
+/* Player uses the move in slot (0..echo_moves()-1); the wild echoid answers. */
+void battle_attack(Battle* b, uint8_t slot);
 /* Returns false if the player has no ball of that kind. */
 bool battle_throw(Battle* b, Inventory* inv, uint8_t ball);
 void battle_flee(Battle* b);

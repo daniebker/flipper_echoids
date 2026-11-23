@@ -13,7 +13,8 @@ nearby WiFi access points and craft gear from shards that Bluetooth devices drop
 - **Echo Balls catch echoids.** Weaken a wild echoid in battle, then throw a ball.
 - **Your first echoid is born from your own Flipper.** On first launch you get a level 1
   echoid generated from your Flipper's Bluetooth MAC address.
-- Your echoids **level up** when they win battles and catch other echoids.
+- Your echoids **level up** (to a maximum of **100**) when they win battles and catch other
+  echoids, and **learn new moves** as they go.
 
 ## Hardware
 
@@ -65,7 +66,7 @@ from a fixed pool of fake devices, so you can play and test without hardware.
 | Screen | Controls |
 |---|---|
 | **Collect** | Starts scanning. The top right shows how many echoids you've spotted (ball icon) and how many shards you've collected (diamond icon) since opening the app. Nearby access points are listed as echoids, showing species, level, type and signal strength. The panel at the bottom shows the selected echoid's rarity, type and stats (HP, ATK, DEF, SPD) at the level it would battle at. `*` = already caught (in your team or PAC), `x` = already fought this session. **OK** battles the selected echoid. **Back** stops scanning. Bluetooth shards are collected automatically and shown in a popup. |
-| **Battle** | **←/→** choose an action, **OK** confirms. **Hit** is a plain attack. **Skill** is a stronger, less accurate attack that uses type matchups. **Ball** opens the throw menu, which shows each ball's catch chance. **Run** tries to escape. |
+| **Battle** | **←/→** choose **Hit**, **Ball** or **Run**, and **OK** confirms. **Hit** opens your lead's moves (up to 4): **↑/↓** picks one and **OK** uses it. Each row shows the move's name, `x2` / `x.5` if the type matchup helps or hurts against this wild echoid, its type (`---` = untyped) and its power. **Ball** opens the throw menu, which shows each ball's catch chance. **Run** tries to escape. |
 | **Team** | Two tabs, switched with **←/→**: **Team** (up to 6 echoids you carry) and **PAC** (storage for the rest). **OK** opens an echoid's details, where **←/→** browses and **OK** opens its actions. For a team member: **Set as lead** (the echoid that fights) or **Send to PAC**. For a PAC echoid: **Move to team**. If the team is full, you pick which team member to swap out. The team always keeps at least one echoid. |
 | **Craft** | `+` marks recipes you can afford. **OK** crafts one. |
 | **Bag** | **←/→** switches between Items and Shards. **OK** on a Tonic or Echo Crystal opens your team list (PAC echoids aren't listed): pick the echoid to use it on with **↑/↓** and press **OK** (**Back** cancels). The list starts on your lead. |
@@ -73,7 +74,8 @@ from a fixed pool of fake devices, so you can play and test without hardware.
 
 ### Types
 
-Skills do 2× damage to the next type in the cycle and ½ damage to the type before it:
+Typed moves do 2× damage to the next type in the cycle and ½ damage to the type before it
+(untyped moves always do normal damage):
 
 `Tide → Ember → Flora → Stone → Spark → Gale → Pulse → Void → Tide`
 
@@ -133,6 +135,29 @@ most of. Cheaper tiers are used first.
   `save_old_version.bin` in the same folder. Your lead and up to five others stay in the
   team and the rest move to the PAC file. Saves from before PACs could be crafted get 4 PACs
   (room for 40 in storage), and you always get enough PACs to hold everything you own.
+
+### Moves
+
+Every echoid learns moves as it levels up and can use its **4 most recently learned** moves.
+Each new move is stronger, so when a fifth is learned the oldest one is forgotten. Each type
+has six moves of its own, and every echoid also learns three untyped moves:
+
+| Level | Move learned | Power / accuracy |
+|---|---|---|
+| 1 | Strike (untyped) | 40 / 100% |
+| 1 | 1st type move (e.g. Splash Jab, Zap, Ping) | 45 / 100% |
+| 8 | 2nd type move | 55 / 95% |
+| 16 | Rush (untyped) | 65 / 90% |
+| 25 | 3rd type move (e.g. Tidal Lash, Arc Bolt) | 70 / 90% |
+| 38 | 4th type move | 85 / 85% |
+| 52 | 5th type move | 100 / 85% |
+| 66 | Echo Burst (untyped) | 95 / 80% |
+| 82 | 6th type move (e.g. Tsunami, Megavolt, Event Horizon) | 120 / 75% |
+
+The battle log shows `Learned …!` when a level-up teaches a move. An Echo Crystal can teach
+one too. On an echoid's details screen, **↑/↓** switches to its **Moves** page, which lists its
+current moves and the next one it will learn. Wild echoids use moves the same way, and they
+usually pick the one that hurts your lead most.
 
 ### Catching and levelling
 

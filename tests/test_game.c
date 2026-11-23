@@ -111,7 +111,7 @@ static void test_progression_and_battle(void) {
         battle_start(&b, &hero, wild_mac, echo_wild_level(wild_mac, hero.level), "Net");
         int turns = 0;
         while(b.result == BattleOngoing && turns < 100) {
-            battle_attack(&b, (turns & 1) != 0);
+            battle_attack(&b, (uint8_t)(turns % 4));
             turns++;
         }
         turns_total += turns;
@@ -245,6 +245,42 @@ static void test_pac_recipe(void) {
     CHECK(memcmp(inv.items, before.items, sizeof(inv.items)) == 0);
 }
 
+static void test_moves(void) {
+    uint8_t mac[6] = {0x80, 0xE1, 0x26, 0xAA, 0xBB, 0xCC};
+    Echoid e;
+    Move m[MAX_MOVES];
+    echo_init(&e, mac, 1, "x");
+    CHECK(echo_moves(&e, m) == 2 && strcmp(m[0].name, "Strike") == 0 && m[1].type != MOVE_NEUTRAL);
+    uint8_t at = 0;
+    const Move* next = echo_next_move(&e, &at);
+    CHECK(next && at == 8);
+    CHECK(echo_move_learned_at(mac, 8) == next);
+    CHECK(echo_move_learned_at(mac, 1) == NULL && echo_move_learned_at(mac, 9) == NULL);
+
+    /* Level 16: four moves; level 25: Strike is forgotten */
+    echo_init(&e, mac, 16, "x");
+    CHECK(echo_moves(&e, m) == 4 && strcmp(m[0].name, "Strike") == 0 && strcmp(m[3].name, "Rush") == 0);
+    echo_init(&e, mac, 25, "x");
+    CHECK(echo_moves(&e, m) == 4 && strcmp(m[0].name, "Strike") != 0);
+
+    /* Level 100: the four strongest, and nothing left to learn */
+    echo_init(&e, mac, MAX_LEVEL, "x");
+    CHECK(echo_moves(&e, m) == 4 && m[3].power == 120);
+    CHECK(echo_next_move(&e, NULL) == NULL);
+
+    /* Stats and XP stay inside their types at level 100 */
+    EchoStats st;
+    echo_stats(&e, &st);
+    CHECK(st.max_hp > 300 && st.max_hp < 2000);
+    CHECK((uint32_t)echo_xp_to_next(MAX_LEVEL - 1) < 65535u);
+
+    /* Level-up from 7 to 8 reports the new move */
+    echo_init(&e, mac, 7, "x");
+    uint8_t before = e.level;
+    echo_add_xp(&e, echo_xp_to_next(7));
+    CHECK(e.level == 8 && echo_move_learned_at(mac, (uint8_t)(before + 1)) != NULL);
+}
+
 static void test_type_chart(void) {
     CHECK(echo_type_mult(EchoTypeTide, EchoTypeEmber) == 200);
     CHECK(echo_type_mult(EchoTypeEmber, EchoTypeTide) == 50);
@@ -322,6 +358,7 @@ int main(void) {
     test_format_duration();
     test_roster();
     test_pac_recipe();
+    test_moves();
     if(failures) {
         printf("%d failure(s)\n", failures);
         return 1;
