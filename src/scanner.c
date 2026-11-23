@@ -432,7 +432,9 @@ static bool scanner_handle_record(Scanner* s, char* rec, size_t len, ScanEvent* 
     if(strstr(rec, "rst:0x")) {
         /* ESP32 ROM bootloader banner: the board just (re)booted. */
         s->stats.reboots++;
+        s->stats.download_mode = strstr(rec, "DOWNLOAD") ? 1 : 0;
     }
+    if(strstr(rec, "waiting for download")) s->stats.download_mode = 1;
     if(strstr(rec, "Bluetooth not supported")) {
         s->bt_unsupported = true;
         scanner_log(s, '#', "Board has no BT: skipping", 25);

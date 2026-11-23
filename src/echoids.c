@@ -363,7 +363,9 @@ static void draw_collect(App* app, Canvas* canvas) {
             scanner_get_stats(app->scanner, &st);
             char info[40];
             const char* status;
-            if(st.reboots >= 3) {
+            if(st.download_mode) {
+                status = "Board is in flash mode!";
+            } else if(st.reboots >= 3) {
                 status = "Board keeps rebooting!";
             } else if(!scanner_board_alive(app->scanner)) {
                 status = waited > furi_ms_to_ticks(BOARD_TIMEOUT_MS) ? "Board is silent" :
@@ -387,7 +389,10 @@ static void draw_collect(App* app, Canvas* canvas) {
             canvas_draw_str_aligned(canvas, 64, 29, AlignCenter, AlignCenter, info);
             char last[SCAN_LOG_LEN * 2];
             scanner_last_rx(app->scanner, last, sizeof(last));
-            if(st.reboots >= 3) {
+            if(st.download_mode) {
+                canvas_draw_str_aligned(canvas, 64, 41, AlignCenter, AlignCenter, "Release BOOT / IO0, then");
+                canvas_draw_str_aligned(canvas, 64, 51, AlignCenter, AlignCenter, "press RST on the board");
+            } else if(st.reboots >= 3) {
                 snprintf(info, sizeof(info), "%lu resets: firmware crash", (unsigned long)st.reboots);
                 canvas_draw_str_aligned(canvas, 64, 41, AlignCenter, AlignCenter, info);
                 canvas_draw_str_aligned(canvas, 64, 51, AlignCenter, AlignCenter, "or power. Reflash/USB test");
@@ -948,7 +953,9 @@ static void draw_terminal(App* app, Canvas* canvas) {
         canvas, 127, 7, AlignRight, AlignBottom, furi_hal_power_is_otg_enabled() ? "5V on" : "5V off");
 
     canvas_set_font(canvas, FontKeyboard);
-    if(st.reboots >= 3) {
+    if(st.download_mode) {
+        snprintf(buf, sizeof(buf), "FLASH MODE: press RST");
+    } else if(st.reboots >= 3) {
         snprintf(buf, sizeof(buf), "REBOOT LOOP x%lu", (unsigned long)st.reboots);
     } else {
         snprintf(
