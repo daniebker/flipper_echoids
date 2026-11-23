@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "card_reader.h"
 #include "game.h"
 #include "pac_store.h"
 #include "session.h"
@@ -58,6 +59,7 @@ typedef enum {
     ScreenJackIn, /* the board is connecting to a network */
     ScreenShards, /* Collect's other page: shards found and devices recharging */
     ScreenDungeon,
+    ScreenCard, /* hold an NFC or RFID card to the Flipper */
 } Screen;
 
 typedef struct {
@@ -67,6 +69,7 @@ typedef struct {
     Gui* gui;
     NotificationApp* notif;
     Scanner* scanner;
+    CardReader* cards;
 
     /* The game itself: every rule lives in session.c. This file only draws
      * it and turns button presses into session actions. */
@@ -88,6 +91,13 @@ typedef struct {
     uint8_t jack_index; /* nearby echoid whose network we're joining */
     bool dungeon_battle; /* the battle on screen is a dungeon fight */
     bool confirm_jack_out;
+
+    /* Scanning cards */
+    uint8_t card_kind; /* CardKind */
+    bool card_battle; /* the battle on screen came from a card */
+    uint8_t card_last[CARD_UID_MAX]; /* the card on the reader, so it's only used once */
+    uint8_t card_last_len;
+    uint32_t card_last_seen;
 
     uint8_t battle_menu;
     uint8_t move_idx;
@@ -299,11 +309,13 @@ enum {
     MenuSettings,
     MenuDungeon,
     MenuJackOut,
+    MenuCard,
 };
 static const char* const menu_names[] =
-    {"Collect", "Team", "PAC", "Craft", "Bag", "Settings", "Dungeon", "Jack out"};
+    {"Collect", "Team", "PAC", "Craft", "Bag", "Settings", "Dungeon", "Jack out", "Scan card"};
 /* What the menu offers: in a dungeon, only the dungeon, team and bag. */
-static const uint8_t menu_normal[] = {MenuCollect, MenuTeam, MenuPac, MenuCraft, MenuBag, MenuSettings};
+static const uint8_t menu_normal[] =
+    {MenuCollect, MenuCard, MenuTeam, MenuPac, MenuCraft, MenuBag, MenuSettings};
 static const uint8_t menu_dungeon[] = {MenuDungeon, MenuTeam, MenuBag, MenuJackOut};
 #define MENU_ROWS 5
 
@@ -619,6 +631,19 @@ static void draw_jack_in(App* app, Canvas* canvas) {
     canvas_draw_frame(canvas, 14, 46, 100, 5);
     canvas_draw_box(canvas, 14 + (x < 80 ? x : 80), 47, 20, 3);
     canvas_draw_str_aligned(canvas, 64, 62, AlignCenter, AlignBottom, "Back: cancel");
+    draw_toast(app, canvas);
+}
+
+static void draw_card(App* app, Canvas* canvas) {
+    draw_title(canvas, "Scan a card", NULL);
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str_aligned(
+        canvas, 64, 24, AlignCenter, AlignCenter, app->card_kind == CardRfid ? "< RFID 125kHz >" : "< NFC >");
+    canvas_set_font(canvas, FontSecondary);
+    canvas_draw_str_aligned(canvas, 64, 36, AlignCenter, AlignCenter, "Hold a card to the back:");
+    canvas_draw_str_aligned(canvas, 64, 45, AlignCenter, AlignCenter, "its echoid comes out!");
+    canvas_draw_line(canvas, 0, 53, 127, 53);
+    canvas_draw_str_aligned(canvas, 64, 63, AlignCenter, AlignBottom, "<> NFC/RFID   Back: exit");
     draw_toast(app, canvas);
 }
 
@@ -1191,6 +1216,12 @@ static const char* const help_lines[] = {
     "(ball) and shards found",
     "(diamond) since app start.",
     "",
+    "SCAN CARD: hold an NFC or",
+    "RFID card to the back (</>",
+    "switches). Same card, same",
+    "echoid. Catch or beat it",
+    "and the card is spent.",
+    "",
     "BOARD NOT WORKING?",
     "Settings > Board setup >",
     "Terminal shows raw UART.",
@@ -1254,6 +1285,9 @@ static void draw_callback(Canvas* canvas, void* ctx) {
         break;
     case ScreenDungeon:
         draw_dungeon(app, canvas);
+        break;
+    case ScreenCard:
+        draw_card(app, canvas);
         break;
     case ScreenTeam:
         draw_team(app, canvas);
@@ -1803,6 +1837,46 @@ static void battle_begin(App* app) {
     notification_message(app->notif, &sequence_single_vibro);
 }
 
+/* ------------------------------------------------------------------------- */
+/* Cards                                                                     */
+/* ------------------------------------------------------------------------- */
+
+#define CARD_GONE_MS 3000 /* a card off the reader this long counts again (RFID reads are slow) */
+
+static void card_open(App* app) {
+    app->card_last_len = 0;
+    card_reader_start(app->cards, app->card_kind);
+    app->screen = ScreenCard;
+}
+
+static void card_close(App* app) {
+    card_reader_stop(app->cards);
+    app->screen = ScreenMenu;
+}
+
+/* A card on the reader starts a battle with its echoid (once per tap). */
+static void card_tick(App* app) {
+    uint8_t uid[CARD_UID_MAX], len;
+    if(!card_reader_take(app->cards, uid, &len)) return;
+    uint32_t now = furi_get_tick();
+    bool same = len == app->card_last_len && memcmp(uid, app->card_last, len) == 0;
+    bool still_there = same && now - app->card_last_seen < furi_ms_to_ticks(CARD_GONE_MS);
+    app->card_last_seen = now;
+    if(still_there) return;
+    memcpy(app->card_last, uid, len);
+    app->card_last_len = len;
+    if(!session_card_battle(&app->s, app->card_kind, uid, len)) {
+        app_say(app);
+        notification_message(app->notif, &sequence_error);
+        return;
+    }
+    card_reader_stop(app->cards);
+    app->card_battle = true;
+    app->battle_menu = 0;
+    app->screen = ScreenBattle;
+    notification_message(app->notif, &sequence_single_vibro);
+}
+
 /* Opens the switch picker; forced when the active echoid has fainted. */
 static void battle_swap_open(App* app) {
     if(!session_battle_others_can_fight(&app->s)) {
@@ -1989,6 +2063,14 @@ static void dungeon_ok(App* app) {
 
 /* Where to go when a battle is over. */
 static Screen after_battle_screen(App* app) {
+    if(app->card_battle) {
+        /* Back to the card reader. The card is probably still on it: it only
+         * counts again once it's been taken away. */
+        app->card_battle = false;
+        card_reader_start(app->cards, app->card_kind);
+        app->card_last_seen = furi_get_tick();
+        return ScreenCard;
+    }
     bool was_dungeon = app->dungeon_battle;
     app->dungeon_battle = false;
     if(session_in_dungeon(&app->s)) return ScreenDungeon;
@@ -2152,6 +2234,9 @@ static void handle_input(App* app, InputEvent* ev) {
             case MenuCollect:
                 collect_start(app);
                 break;
+            case MenuCard:
+                card_open(app);
+                break;
             case MenuTeam:
                 team_open(app, 0, app->s.save.lead);
                 break;
@@ -2212,6 +2297,15 @@ static void handle_input(App* app, InputEvent* ev) {
             app->shards_scroll = (uint8_t)(n < 0 ? 0 : (n > max ? max : n));
         } else if(press && (ev->key == InputKeyLeft || ev->key == InputKeyRight || ev->key == InputKeyBack)) {
             app->screen = ScreenCollect; /* still collecting */
+        }
+        break;
+
+    case ScreenCard:
+        if(press && (ev->key == InputKeyLeft || ev->key == InputKeyRight)) {
+            app->card_kind = app->card_kind == CardRfid ? CardNfc : CardRfid;
+            card_open(app);
+        } else if(press && ev->key == InputKeyBack) {
+            card_close(app);
         }
         break;
 
@@ -2503,6 +2597,7 @@ static void app_tick(App* app) {
 
     if(app->screen == ScreenCalibrate) calibrate_tick(app);
     if(app->screen == ScreenJackIn) jack_in_tick(app);
+    if(app->screen == ScreenCard) card_tick(app);
 
     session_tick(&app->s);
 
@@ -2544,6 +2639,7 @@ int32_t echoids_app(void* p) {
     app->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     app->queue = furi_message_queue_alloc(8, sizeof(InputEvent));
     app->scanner = scanner_alloc();
+    app->cards = card_reader_alloc();
     app->notif = furi_record_open(RECORD_NOTIFICATION);
     app->view_port = view_port_alloc();
     view_port_draw_callback_set(app->view_port, draw_callback, app);
@@ -2563,6 +2659,7 @@ int32_t echoids_app(void* p) {
     }
 
     scanner_stop(app->scanner);
+    card_reader_free(app->cards);
     session_save(&app->s);
 
     view_port_enabled_set(app->view_port, false);

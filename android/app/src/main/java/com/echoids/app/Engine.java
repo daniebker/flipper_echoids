@@ -11,6 +11,9 @@ final class Engine {
 
     private Engine() {}
 
+    static final int CARD_NFC = 0;
+    static final int CARD_RFID = 1;
+
     static final int WHERE_TEAM = 0, WHERE_PAC = 1, WHERE_NEARBY = 2;
     static final int SIGHTING_WIFI = 0, SIGHTING_BLUETOOTH = 1;
 
@@ -42,6 +45,8 @@ final class Engine {
     static native String battleBall(int ball);
     static native String battleRun();
     static native String battleClose();
+    /** A scanned card starts a battle with its echoid (kind: CARD_NFC or CARD_RFID). */
+    static native String cardBattle(int kind, byte[] uid);
     static native String craft(int recipe);
     static native String useItem(int item, int teamIndex);
     static native String setLead(int teamIndex);
@@ -53,10 +58,11 @@ final class Engine {
 
     /* Dungeons */
     static native String dungeon();
-    static native String jackInCheck(int nearbyIndex);
-    static native void linkUp(byte[] mac);
+    /** The phone is on this WiFi network (BSSID bytes and name). */
+    static native void linkUp(byte[] mac, String ssid);
     static native void linkDown();
-    static native String jackIn(int nearbyIndex);
+    /** Jacks in to the network the phone is connected to. */
+    static native String jackIn();
     static native String dungeonRoom();
     static native String dungeonNext();
     static native String dungeonLeave();

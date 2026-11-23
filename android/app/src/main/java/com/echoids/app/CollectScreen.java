@@ -69,6 +69,8 @@ final class CollectScreen extends Screen {
         head.addView(Ui.secondaryButton(app,
             "💎 Shards: +" + sh.optInt("collected") + " found · " + sh.optInt("cooling") + " recharging",
             v -> app.push(new ShardsScreen(app))));
+        head.addView(Ui.space(app, 1, 8));
+        head.addView(Ui.secondaryButton(app, "📇 Scan a card", v -> app.push(new CardScreen(app))));
         col.addView(head);
 
         /* Nearby echoids */

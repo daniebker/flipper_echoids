@@ -36,11 +36,12 @@ work exactly the same way.
 - **Shards:** collecting is quiet, with no popups or vibrations. The **Shards** button on Collect
   opens a screen listing every Bluetooth device you've passed: the shard it drops, whether you
   collected it, and how long until it's ready again.
-- **Dungeons:** on a wild echoid's page, **Jack in** connects the phone to that network (it
-  asks for the password, and Android asks you to confirm) and opens the network's
-  [dungeon](#dungeons). While jacked in, the Collect tab becomes **Dungeon**, and PAC and Craft
-  are hidden. If the connection drops, you're ejected. Needs Android 10 or newer; enterprise
-  (802.1X) and WEP networks can't be joined.
+- **Dungeons:** while the phone is on WiFi, a **Jack in** tab appears at the bottom. It shows
+  the [dungeon](#dungeons) hidden in the network you're connected to (connect in Android's own
+  WiFi settings; the game never connects for you), and its **Jack in** button takes you in.
+  While jacked in, the Collect tab becomes **Dungeon**, and PAC and Craft are hidden. Leave
+  that network and you're ejected. Android only says which network you're on with location
+  access, and with location turned on.
 - **Echoid details:** tap any echoid to see its sprite, rarity, star rating and each stat's
   roll, plus its moves, the next move it learns, the moves its type can't learn, and its
   active hours. From the same screen you can make it your lead, use an item on it, or move
@@ -364,7 +365,7 @@ press **OK** and choose **Jack in**. Type the network's password on the Flipper 
   settings. You can use items between fights and change your lead.
 - **No catching, no running:** dungeon echoids can only be fought. Wins still give XP,
   shared as usual.
-- **Ejected:** if your whole team faints, or (on Android) the connection drops, you're
+- **Ejected:** if your whole team faints, or (on Android) the phone leaves the network, you're
   thrown out. Jacking out by choice also leaves; either way the dungeon starts again from
   the first room next time.
 - **Rewards:** beating the boss gives a Prismatic shard of the dungeon's element, 2 Great
@@ -373,7 +374,25 @@ press **OK** and choose **Jack in**. Type the network's password on the Flipper 
   until you jack out. Networks whose name is hidden can't be joined, and a password with
   both `"` and `'` in it can't be sent to Marauder.
 
-Progress is saved to `/ext/apps_data/echoids/save.bin`.
+### Cards
+
+NFC and RFID cards hide echoids too. On the Flipper, choose **Scan card** in the main menu
+and hold a card to the back: **Left/Right** switches between **NFC** (ISO 14443-A: MIFARE,
+NTAG, most access and transport cards) and **125 kHz RFID** (EM4100, HID Prox and the other
+formats the Flipper reads). On Android, tap **Scan a card** on Collect and hold an NFC card
+to the back of the phone (phones can't read 125 kHz RFID).
+
+- **Same card, same echoid:** the card's UID decides the echoid (for RFID, its protocol and
+  data too). Its level follows your lead, like a wild echoid's.
+- **Any time:** card echoids aren't tied to the time of day, and scanning WiFi isn't needed.
+- **Once only:** after you catch or defeat a card's echoid, that card is spent and can't start
+  a battle again. Running away, or losing, leaves it for another try.
+- A card left on the reader after its battle doesn't start another one: take it away and
+  hold it there again.
+- Starting a new game makes every card's echoid available again.
+
+Progress is saved to `/ext/apps_data/echoids/save.bin`; spent cards are listed in `cards.bin`
+next to it.
 
 ## Board setup and troubleshooting
 
@@ -477,6 +496,8 @@ src/scanner.[ch]       UART link to the ESP32 board and scan cycling
 src/scanner_parse.c    Marauder / CSV line parser (no SDK)
 src/save.[ch]          Save file (team, items, settings) and upgrades from old versions
 src/pac_store.[ch]     PAC storage file on the SD card (unlimited stored echoids)
+src/card_store.[ch]    Cards whose echoid was caught or defeated (cards.bin)
+src/card_reader.[ch]   Flipper NFC and 125 kHz RFID card reading (Flipper only)
 tests/test_game.c      Host-side unit tests
 android/               Android app: native Java UI and radios (app/src/main/java), and a
                        JSON view of src/session.c plus the JNI bridge (app/src/main/cpp)

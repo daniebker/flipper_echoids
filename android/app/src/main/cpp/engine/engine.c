@@ -387,6 +387,7 @@ char* engine_battle_json(void) {
         json_key(&j, "wild");
         json_obj(&j);
         put_echoid(&j, &b->wild);
+        json_kstr(&j, "origin", b->wild.origin);
         json_end_obj(&j);
         json_key(&j, "mine");
         json_obj(&j);
@@ -400,6 +401,7 @@ char* engine_battle_json(void) {
             if(b->log[i][0]) json_str(&j, b->log[i]);
         json_end_arr(&j);
         json_kbool(&j, "inDungeon", S.battle_in_dungeon);
+        json_kbool(&j, "fromCard", S.battle_card);
         json_kbool(&j, "canRun", !S.battle_in_dungeon);
         const char* blocked = session_catch_blocked(&S);
         json_kbool(&j, "canCatch", blocked == NULL);
@@ -452,6 +454,9 @@ char* engine_take_events_json(void) {
 
 char* engine_battle_begin(uint32_t i) {
     return result(i < SESSION_NEARBY_MAX && session_battle_begin(&S, (uint8_t)i));
+}
+char* engine_card_battle(uint8_t kind, const uint8_t* uid, uint32_t uid_len) {
+    return result(uid_len <= CARD_UID_MAX && session_card_battle(&S, kind, uid, (uint8_t)uid_len));
 }
 char* engine_battle_move(uint8_t slot) {
     return result(session_battle_move(&S, slot));
@@ -535,6 +540,29 @@ char* engine_dungeon_json(void) {
             json_end_obj(&j);
         }
         json_end_arr(&j);
+    } else {
+        /* The network the phone is on, and the dungeon it hides. */
+        char name[NAME_LEN + 12];
+        DungeonLayout map;
+        json_kbool(&j, "linked", session_linked_dungeon(&S, name, sizeof(name), &map));
+        if(S.link_up) {
+            char mac[18];
+            mac_hex(S.link_mac, mac);
+            json_kstr(&j, "ssid", S.link_ssid);
+            json_kstr(&j, "mac", mac);
+            json_kstr(&j, "name", name);
+            json_kint(&j, "type", map.type);
+            json_kstr(&j, "typeName", echo_type_name(map.type));
+            json_kint(&j, "roomCount", map.rooms);
+            json_kint(&j, "level", dungeon_foe_level(session_team_level(&S), false));
+            json_kint(&j, "bossLevel", dungeon_foe_level(session_team_level(&S), true));
+            json_key(&j, "boss");
+            json_obj(&j);
+            Echoid boss;
+            echo_init(&boss, map.foe[map.rooms - 1], dungeon_foe_level(session_team_level(&S), true), S.link_ssid);
+            put_echoid(&j, &boss);
+            json_end_obj(&j);
+        }
     }
     json_end_obj(&j);
     return json_finish(&j);
@@ -543,11 +571,14 @@ char* engine_dungeon_json(void) {
 char* engine_jack_in_check(uint32_t i) {
     return result(i < SESSION_NEARBY_MAX && session_jack_in_check(&S, (uint8_t)i));
 }
-void engine_link_up(const uint8_t mac[6]) {
-    if(ready) session_link_up(&S, mac);
+void engine_link_up(const uint8_t mac[6], const char* ssid) {
+    if(ready) session_link_named(&S, mac, ssid);
 }
 void engine_link_down(void) {
     if(ready) session_link_down(&S);
+}
+char* engine_jack_in_linked(void) {
+    return result(session_jack_in_linked(&S));
 }
 char* engine_jack_in(uint32_t i) {
     return result(i < SESSION_NEARBY_MAX && session_jack_in(&S, (uint8_t)i));

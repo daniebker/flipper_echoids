@@ -39,7 +39,6 @@ final class RadioScanner {
     private final BluetoothAdapter bluetooth;
     private final Map<String, Long> btLastSent = new HashMap<>();
     /** Security of each access point seen ("[WPA2-PSK-CCMP][ESS]"), by BSSID in upper case. */
-    private static final Map<String, String> wifiSecurity = new HashMap<>();
     private BluetoothLeScanner bleScanner;
     private boolean bleRunning;
     private boolean receiverRegistered;
@@ -190,7 +189,6 @@ final class RadioScanner {
             String ssid = r.SSID;
             if(ssid != null && ssid.startsWith("\"") && ssid.endsWith("\"") && ssid.length() >= 2)
                 ssid = ssid.substring(1, ssid.length() - 1);
-            if(r.capabilities != null) wifiSecurity.put(r.BSSID.toUpperCase(java.util.Locale.ROOT), r.capabilities);
             Engine.pushSighting(Engine.SIGHTING_WIFI, mac, r.level, ssid == null ? "" : ssid);
         }
     }
@@ -258,11 +256,5 @@ final class RadioScanner {
             return null;
         }
         return any ? mac : null;
-    }
-
-    /** The security flags last seen for an access point, or "" if unknown. */
-    static String security(String bssid) {
-        String caps = wifiSecurity.get(bssid.toUpperCase(java.util.Locale.ROOT));
-        return caps == null ? "" : caps;
     }
 }

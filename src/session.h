@@ -118,6 +118,7 @@ typedef struct {
     /* Battle */
     bool in_battle;
     bool battle_in_dungeon;
+    bool battle_card; /* the wild echoid came from a scanned card */
     bool must_switch; /* the active echoid fainted: pick a replacement */
     int8_t battle_nearby;
     Battle battle;
@@ -127,6 +128,7 @@ typedef struct {
     /* Jacking in: the platform connects to a network and reports it here. */
     bool link_up;
     uint8_t link_mac[6];
+    char link_ssid[NAME_LEN]; /* "" if the platform didn't say */
     Dungeon dungeon;
 
     SessionEvent events[SESSION_EVENTS_MAX];
@@ -180,6 +182,15 @@ bool session_battle_run(Session* s);
 /* Leaves a finished battle. */
 bool session_battle_close(Session* s);
 
+/* ---- Cards ----
+ * A scanned NFC or RFID card (kind: CardKind) starts a battle with its echoid,
+ * which is always the same for the same card. Any time of day; not in a
+ * dungeon. Once its echoid is caught or defeated, the card is spent: it can't
+ * start a battle again. Running away or losing leaves it for another try. */
+bool session_card_battle(Session* s, uint8_t kind, const uint8_t* uid, uint8_t uid_len);
+/* Has this card's echoid already been caught or defeated? */
+bool session_card_spent(Session* s, uint8_t kind, const uint8_t* uid, uint8_t uid_len);
+
 /* ---- Dungeons ----
  * 1. session_jack_in_check(): may the player jack in to this nearby network?
  * 2. The platform connects to the network (asking for its password), then
@@ -197,6 +208,13 @@ void session_link_up(Session* s, const uint8_t mac[6]);
 void session_link_down(Session* s);
 bool session_wants_link(const Session* s);
 bool session_jack_in(Session* s, uint8_t nearby_index);
+/* Or: the platform reports the network it's already on (session_link_named())
+ * and the player jacks in to that one, nearby or not. */
+void session_link_named(Session* s, const uint8_t mac[6], const char* ssid);
+bool session_jack_in_linked(Session* s);
+/* The dungeon of the network you're connected to, as it would be (for a
+ * preview). False if not connected. */
+bool session_linked_dungeon(const Session* s, char* name, size_t name_len, DungeonLayout* map);
 bool session_in_dungeon(const Session* s);
 /* Team level the dungeon's echoids match: the team's average, rounded up. */
 uint8_t session_team_level(const Session* s);

@@ -283,6 +283,26 @@ const char* item_name(uint8_t item) {
 /* Generation                                                                */
 /* ------------------------------------------------------------------------- */
 
+void card_mac(uint8_t kind, const uint8_t* uid, uint8_t uid_len, uint8_t out[6]) {
+    /* 64-bit FNV-1a over a tag, the kind, the length and the UID. */
+    uint64_t h = 14695981039346656037ull;
+    const uint8_t head[] = {'c', 'a', 'r', 'd', kind, uid_len};
+    for(size_t i = 0; i < sizeof(head); i++) {
+        h ^= head[i];
+        h *= 1099511628211ull;
+    }
+    for(uint8_t i = 0; i < uid_len; i++) {
+        h ^= uid[i];
+        h *= 1099511628211ull;
+    }
+    h ^= h >> 29;
+    h *= 0xBF58476D1CE4E5B9ull;
+    h ^= h >> 32;
+    for(int i = 0; i < 6; i++)
+        out[i] = (uint8_t)(h >> (8 * i));
+    out[0] = (uint8_t)((out[0] | 0x02) & 0xFE); /* locally administered, unicast */
+}
+
 uint32_t echo_hash_mac(const uint8_t mac[6]) {
     /* FNV-1a over the 6 MAC bytes, then a final avalanche. */
     uint32_t h = 2166136261u;
