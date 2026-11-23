@@ -63,6 +63,12 @@ final class CollectScreen extends Screen {
         stats.addView(Rows.stat(app, String.valueOf(st.optInt("shards")), "shards found"), Ui.weight(1));
         stats.addView(Rows.stat(app, String.valueOf(st.optInt("asleep")), String.format("asleep at %02d:00", hour)), Ui.weight(1));
         head.addView(stats);
+        /* Shards are listed on their own screen instead of popping up. */
+        JSONObject sh = Ui.obj(Engine.shards());
+        head.addView(Ui.space(app, 1, 12));
+        head.addView(Ui.secondaryButton(app,
+            "💎 Shards: +" + sh.optInt("collected") + " found · " + sh.optInt("cooling") + " recharging",
+            v -> app.push(new ShardsScreen(app))));
         col.addView(head);
 
         /* Nearby echoids */

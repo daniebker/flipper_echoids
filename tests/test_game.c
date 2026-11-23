@@ -215,6 +215,16 @@ static void test_format_duration(void) {
     CHECK(strcmp(b, "4h00m") == 0);
     format_duration(3600 + 5 * 60, b, sizeof(b));
     CHECK(strcmp(b, "1h05m") == 0);
+    format_duration(30 * 3600, b, sizeof(b));
+    CHECK(strcmp(b, "30h00m") == 0);
+    format_duration(300 * 3600, b, sizeof(b));
+    CHECK(strcmp(b, "12d12h") == 0);
+    format_duration(48 * 3600 + 1, b, sizeof(b));
+    CHECK(strcmp(b, "2d01h") == 0);
+    /* The shortest cooldown is 3 hours; each rarer tier is ten times longer. */
+    CHECK(shard_cooldown_s(ShardDull) == 3 * 3600);
+    CHECK(shard_cooldown_s(ShardBright) == 10 * shard_cooldown_s(ShardDull));
+    CHECK(shard_cooldown_s(ShardPrismatic) == 10 * shard_cooldown_s(ShardBright));
 }
 
 static void test_roster(void) {

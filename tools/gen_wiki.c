@@ -572,8 +572,10 @@ static void gen_items(void) {
         format_duration(shard_cooldown_s(k), d, sizeof(d));
         printf("| %s | %s |\n", shard_tier_name(k), d);
     }
-    printf("\nWhen you pass a recharging device, Collect shows how long is left (for example "
-           "`Bright Tide: 42m left`), once per device per visit.\n\n");
+    printf("\nThe shortest cooldown is 3 hours, and each rarer tier takes ten times longer. "
+           "Collect's **Shards** page (left/right on the Flipper, the Shards button on Android) "
+           "lists every device you pass with its shard and the time left until it's ready "
+           "again. Shards don't pop up.\n\n");
 
     printf("## Recipes\n\n| Item | Recipe | Effect |\n|---|---|---|\n");
     for(size_t i = 0; i < recipe_count; i++) {

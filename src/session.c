@@ -167,7 +167,7 @@ bool session_reset(Session* s) {
     s->spotted_count = 0;
     s->shards_this_run = 0;
     s->asleep_count = 0;
-    s->recharge_noted_count = 0;
+    s->shard_log_count = 0;
     s->event_count = 0;
     session_save(s);
     say(s, "New game started");
@@ -228,6 +228,37 @@ static void handle_ap(Session* s, const ScanEvent* ev) {
     }
 }
 
+/* Puts a device at the top of the shard log (once per device). */
+static void shard_log(Session* s, const ScanEvent* ev, Shard sh, bool collected, uint32_t ready_at) {
+    uint8_t n = s->shard_log_count;
+    bool was_collected = false;
+    for(uint8_t i = 0; i < n; i++) {
+        if(memcmp(s->shard_log[i].mac, ev->mac, 6) == 0) {
+            was_collected = s->shard_log[i].collected;
+            memmove(&s->shard_log[i], &s->shard_log[i + 1], sizeof(ShardSeen) * (n - i - 1));
+            n--;
+            break;
+        }
+    }
+    if(n == SESSION_SHARDS_MAX) n--; /* the oldest drops off */
+    memmove(&s->shard_log[1], &s->shard_log[0], sizeof(ShardSeen) * n);
+    ShardSeen* e = &s->shard_log[0];
+    memset(e, 0, sizeof(*e));
+    memcpy(e->mac, ev->mac, 6);
+    e->shard = sh;
+    e->collected = collected || was_collected;
+    e->ready_at = ready_at;
+    snprintf(e->name, sizeof(e->name), "%s", ev->name);
+    s->shard_log_count = n + 1;
+}
+
+uint32_t session_shard_left(const Session* s, uint8_t i) {
+    if(i >= s->shard_log_count) return 0;
+    uint32_t now = furi_hal_rtc_get_timestamp();
+    uint32_t at = s->shard_log[i].ready_at;
+    return at > now ? at - now : 0;
+}
+
 static void handle_bt(Session* s, const ScanEvent* ev) {
     SaveData* sv = &s->save;
     uint32_t h = echo_hash_mac(ev->mac);
@@ -244,22 +275,11 @@ static void handle_bt(Session* s, const ScanEvent* ev) {
            sh.tier,
            furi_hal_rtc_get_timestamp(),
            &remaining)) {
-        /* Mention a recharging device once per visit. */
-        for(uint8_t i = 0; i < s->recharge_noted_count; i++)
-            if(s->recharge_noted[i] == h) return;
-        if(s->recharge_noted_count < SESSION_NOTED_MAX) s->recharge_noted[s->recharge_noted_count++] = h;
-        char left[12];
-        format_duration(remaining, left, sizeof(left));
-        snprintf(
-            text,
-            sizeof(text),
-            "%s %s: %s left",
-            sh.tier == ShardPrismatic ? "Prism" : shard_tier_name(sh.tier),
-            echo_type_name(sh.type),
-            left);
-        event(s, SessionEventRecharge, ev->mac, sh, text);
+        /* Still recharging: it goes in the shard log with the time left. */
+        shard_log(s, ev, sh, false, furi_hal_rtc_get_timestamp() + remaining);
         return;
     }
+    shard_log(s, ev, sh, true, furi_hal_rtc_get_timestamp() + shard_cooldown_s(sh.tier));
     if(sv->inv.shards[sh.type][sh.tier] < 9999) sv->inv.shards[sh.type][sh.tier]++;
     sv->shards_found++;
     if(s->shards_this_run < UINT16_MAX) s->shards_this_run++;
@@ -285,7 +305,6 @@ void session_scan_start(Session* s) {
     for(uint8_t i = 0; i < s->nearby_count; i++)
         if(s->nearby[i].state == NearbyWild && session_owns(s, s->nearby[i].mac))
             s->nearby[i].state = NearbyOwned;
-    s->recharge_noted_count = 0;
     s->scanning = true;
 }
 

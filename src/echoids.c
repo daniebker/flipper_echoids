@@ -32,6 +32,7 @@
 #define NEARBY_ROWS      3
 #define CRAFT_ROWS       3
 #define RESULT_ROWS        5
+#define SHARD_ROWS         4
 #define BAG_ROWS           5
 
 typedef enum {
@@ -55,6 +56,7 @@ typedef enum {
     ScreenBattleSwap, /* battle: choose a team member to send in */
     ScreenBattleResult, /* after a battle: XP, level-ups and new moves per echoid */
     ScreenJackIn, /* the board is connecting to a network */
+    ScreenShards, /* Collect's other page: shards found and devices recharging */
     ScreenDungeon,
 } Screen;
 
@@ -78,6 +80,7 @@ typedef struct {
 
     uint8_t nearby_idx;
     uint8_t nearby_scroll;
+    uint8_t shards_scroll;
     bool collect_menu; /* Battle / Jack in popup on Collect */
     uint8_t collect_menu_idx;
 
@@ -140,7 +143,6 @@ typedef struct {
 
     char toast[40];
     uint32_t toast_until;
-    bool toast_important; /* a "+1 shard" popup: don't cover it with a recharge note */
 } App;
 
 /* ------------------------------------------------------------------------- */
@@ -151,11 +153,6 @@ static void app_toast(App* app, const char* msg) {
     strncpy(app->toast, msg, sizeof(app->toast) - 1);
     app->toast[sizeof(app->toast) - 1] = '\0';
     app->toast_until = furi_get_tick() + furi_ms_to_ticks(TOAST_MS);
-    app->toast_important = false;
-}
-
-static bool app_toast_showing(App* app) {
-    return app->toast[0] && (int32_t)(app->toast_until - furi_get_tick()) > 0;
 }
 
 /* Array indexes of the team (party=true) or the PAC. */
@@ -394,13 +391,14 @@ static void draw_shard_icon(Canvas* canvas, int x, int y) {
 }
 
 static void draw_collect(App* app, Canvas* canvas) {
-    const char* title = "Idle";
+    /* "<>": left/right opens the Shards page. */
+    const char* title = "Idle <>";
     switch(scanner_phase(app->scanner)) {
     case ScanPhaseWifi:
-        title = "WiFi";
+        title = "WiFi <>";
         break;
     case ScanPhaseBt:
-        title = "BT";
+        title = "BT <>";
         break;
     default:
         break;
@@ -559,6 +557,47 @@ static void draw_collect(App* app, Canvas* canvas) {
         }
     }
     draw_toast(app, canvas);
+}
+
+/* Collect's other page: each Bluetooth device heard this outing, newest first.
+ * "+" marks a shard you collected; the right column says when the device can
+ * drop its shard again. */
+static void draw_shards(App* app, Canvas* canvas) {
+    char right[24];
+    uint8_t cooling = 0;
+    for(uint8_t i = 0; i < app->s.shard_log_count; i++)
+        if(session_shard_left(&app->s, i)) cooling++;
+    snprintf(right, sizeof(right), "+%u  %u cooling", app->s.shards_this_run, cooling);
+    draw_title(canvas, "Shards <>", right);
+    canvas_set_font(canvas, FontSecondary);
+    if(app->s.shard_log_count == 0) {
+        canvas_draw_str_aligned(canvas, 64, 30, AlignCenter, AlignCenter, "No shards yet");
+        canvas_draw_str_aligned(canvas, 64, 42, AlignCenter, AlignCenter, "Bluetooth devices drop them");
+        return;
+    }
+    for(uint8_t row = 0; row < SHARD_ROWS; row++) {
+        uint8_t i = app->shards_scroll + row;
+        if(i >= app->s.shard_log_count) break;
+        const ShardSeen* e = &app->s.shard_log[i];
+        int y = 23 + row * 11;
+        char buf[24], left[12];
+        snprintf(
+            buf,
+            sizeof(buf),
+            "%c%s %s",
+            e->collected ? '+' : ' ',
+            shard_tier_name(e->shard.tier),
+            echo_type_short(e->shard.type));
+        canvas_draw_str(canvas, 0, y, buf);
+        uint32_t secs = session_shard_left(&app->s, i);
+        if(secs)
+            format_duration(secs, left, sizeof(left));
+        else
+            snprintf(left, sizeof(left), "ready");
+        canvas_draw_str_aligned(canvas, 121, y, AlignRight, AlignBottom, left);
+    }
+    if(app->s.shard_log_count > SHARD_ROWS)
+        elements_scrollbar_pos(canvas, 127, 14, 48, app->shards_scroll, app->s.shard_log_count - SHARD_ROWS + 1);
 }
 
 static void draw_jack_in(App* app, Canvas* canvas) {
@@ -1107,8 +1146,10 @@ static const char* const help_lines[] = {
     "Bluetooth devices drop one",
     "shard each (MAC decides",
     "element and tier). Then",
-    "they recharge: Dull 15m,",
-    "Bright 1h, Prismatic 4h.",
+    "they recharge: Dull 3h,",
+    "Bright 30h, Prismatic 12d.",
+    "Left/right on Collect lists",
+    "shards and recharge times.",
     "",
     "Craft Echo Balls from",
     "shards. Weaken a wild echoid",
@@ -1207,6 +1248,9 @@ static void draw_callback(Canvas* canvas, void* ctx) {
         break;
     case ScreenJackIn:
         draw_jack_in(app, canvas);
+        break;
+    case ScreenShards:
+        draw_shards(app, canvas);
         break;
     case ScreenDungeon:
         draw_dungeon(app, canvas);
@@ -2150,11 +2194,24 @@ static void handle_input(App* app, InputEvent* ev) {
             }
         } else if(dy) {
             list_move(&app->nearby_idx, &app->nearby_scroll, app->s.nearby_count, NEARBY_ROWS, dy);
+        } else if(press && (ev->key == InputKeyLeft || ev->key == InputKeyRight)) {
+            app->shards_scroll = 0;
+            app->screen = ScreenShards;
         } else if(press && ev->key == InputKeyOk && app->s.nearby_count > 0) {
             app->collect_menu = true;
             app->collect_menu_idx = 0;
         } else if(press && ev->key == InputKeyBack) {
             collect_stop(app);
+        }
+        break;
+
+    case ScreenShards:
+        if(dy) {
+            int n = (int)app->shards_scroll + dy;
+            int max = app->s.shard_log_count > SHARD_ROWS ? app->s.shard_log_count - SHARD_ROWS : 0;
+            app->shards_scroll = (uint8_t)(n < 0 ? 0 : (n > max ? max : n));
+        } else if(press && (ev->key == InputKeyLeft || ev->key == InputKeyRight || ev->key == InputKeyBack)) {
+            app->screen = ScreenCollect; /* still collecting */
         }
         break;
 
@@ -2462,15 +2519,10 @@ static void app_tick(App* app) {
             notification_message(app->notif, &sequence_blink_green_10);
             break;
         case SessionEventShard:
-            app_toast(app, se.text);
-            app->toast_important = true;
+            /* No popup: the Shards page (left/right on Collect) lists them. */
             notification_message(
                 app->notif,
                 se.shard.tier == ShardPrismatic ? &sequence_blink_magenta_100 : &sequence_blink_cyan_10);
-            break;
-        case SessionEventRecharge:
-            /* Don't cover a new shard's popup with a recharge note. */
-            if(!(app->toast_important && app_toast_showing(app))) app_toast(app, se.text);
             break;
         }
     }

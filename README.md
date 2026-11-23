@@ -33,6 +33,9 @@ work exactly the same way.
   - **PAC** lists everything in Cold PAC Storage, however many you have.
   - **Craft** shows every recipe and whether you have the shards.
   - **Bag** shows your items, plus a table of shards by element and tier.
+- **Shards:** collecting is quiet, with no popups or vibrations. The **Shards** button on Collect
+  opens a screen listing every Bluetooth device you've passed: the shard it drops, whether you
+  collected it, and how long until it's ready again.
 - **Dungeons:** on a wild echoid's page, **Jack in** connects the phone to that network (it
   asks for the password, and Android asks you to confirm) and opens the network's
   [dungeon](#dungeons). While jacked in, the Collect tab becomes **Dungeon**, and PAC and Craft
@@ -149,7 +152,8 @@ and the matchup chart, every move, battles and catch chances, items and crafting
 
 | Screen | Controls |
 |---|---|
-| **Collect** | Starts scanning. The top right shows how many echoids you've spotted (ball icon) and how many shards you've collected (diamond icon) since opening the app. Nearby access points are listed as echoids, showing species, level, type and signal strength. The panel at the bottom shows the selected echoid's rarity, type and stats (HP, ATK, DEF, SPD) at the level it would battle at. `*` = already caught (in your team or PAC), `x` = already fought this session. The letter after the type is the echoid's **rarity**: `C` Common, `U` Uncommon, `R` Rare, and `E` Epic or `L` Legendary in a box so they stand out. The same badge appears in the Team and PAC lists and under the wild echoid's name in battle. **OK** offers **Battle!** or **Jack in** (enter that network's [dungeon](#dungeons)). You can't battle or catch an echoid you already own; the app checks your team and PAC when you press OK, when you open the ball menu and before it stores a catch, so you can't end up with duplicates. **Back** stops scanning. Bluetooth shards are collected automatically and shown in a popup. |
+| **Collect** | Starts scanning. The top right shows how many echoids you've spotted (ball icon) and how many shards you've collected (diamond icon) since opening the app. Nearby access points are listed as echoids, showing species, level, type and signal strength. The panel at the bottom shows the selected echoid's rarity, type and stats (HP, ATK, DEF, SPD) at the level it would battle at. `*` = already caught (in your team or PAC), `x` = already fought this session. The letter after the type is the echoid's **rarity**: `C` Common, `U` Uncommon, `R` Rare, and `E` Epic or `L` Legendary in a box so they stand out. The same badge appears in the Team and PAC lists and under the wild echoid's name in battle. **OK** offers **Battle!** or **Jack in** (enter that network's [dungeon](#dungeons)). You can't battle or catch an echoid you already own; the app checks your team and PAC when you press OK, when you open the ball menu and before it stores a catch, so you can't end up with duplicates. **Back** stops scanning. Bluetooth shards are collected automatically, without popups (the LED blinks). **←/→** switches to the **Shards** page. |
+| **Shards** | Collect's other page (the `<>` in the title): every Bluetooth device heard since opening the app, newest first, with the shard it drops (tier and element) and how long until it can drop it again, or `ready`. `+` marks shards you collected. The title shows how many you collected and how many devices are still recharging. **↑/↓** scrolls, and **←/→** or **Back** returns to the echoids. Scanning carries on meanwhile. |
 | **Battle** | **←/→** choose **Hit**, **Swap**, **Ball** or **Run**, and **OK** confirms. **Hit** opens the fighting echoid's moves (up to 4): **↑/↓** picks one and **OK** uses it. Each row shows the move's name, `x2` / `x.5` if the type matchup helps or hurts against this wild echoid, the move's type and its power. **Swap** sends in another team member (`>` marks the one fighting). Switching uses your turn, so the wild echoid gets an attack on the newcomer. If your echoid faints and anyone on your team can still fight, you pick who goes next instead of losing; the battle is only lost when the whole team has fainted. A battle starts with your lead, or with the first healthy team member if the lead has fainted. XP is shared: see [Catching and levelling](#catching-and-levelling). **Ball** opens the throw menu, which shows each ball's catch chance. **Run** tries to escape. |
 | **Team** | Two tabs, switched with **←/→**: **Team** (up to 6 echoids you carry) and **PAC** (Cold PAC Storage for the rest). **OK** opens an echoid's details, where **←/→** browses and **OK** opens its actions. For a team member: **Set as lead** (the echoid that fights) or **Send to PAC**. For a PAC echoid: **Move to team**. If the team is full, you pick which team member to swap out. The team always keeps at least one echoid. |
 | **PAC** | Opens **Cold PAC Storage** straight away: browse every echoid you've stored with **↑/↓**, and press **OK** for its details and **Move to team**. The main menu shows how many echoids are stored. It's the same screen as Team's PAC tab, so **←/→** switches to the team. |
@@ -190,16 +194,15 @@ Shards come in 8 elements (the same as the creature types) and three tiers:
 
 Once a Bluetooth device has dropped its shard, it won't drop it again until its
 cooldown has passed. Closing and reopening Collect, or the whole app, doesn't reset it.
-If you pass a device that's still recharging, a popup shows how long is left, for example
-`Bright Tide: 42m left` (Prismatic is shortened to `Prism` to fit). Each device's popup appears
-once per Collect visit and never covers a `+1 … shard` popup.
-Rarer shards take longer to recharge:
+The **Shards** page (**←/→** on Collect; the Shards button on Android's Collect tab) lists
+each device you pass, with its shard and the time left until it's ready again.
+The shortest cooldown is 3 hours, and each rarer tier takes ten times longer:
 
 | Shard tier | Cooldown |
 |---|---|
-| Dull | 15 minutes |
-| Bright | 1 hour |
-| Prismatic | 4 hours |
+| Dull | 3 hours |
+| Bright | 30 hours |
+| Prismatic | 300 hours (12.5 days) |
 
 Cooldowns use the Flipper's clock and are stored in the save file. The app remembers
 the last 256 devices; when that list is full, the device collected longest ago is

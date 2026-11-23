@@ -324,12 +324,12 @@ public final class MainActivity extends Activity {
         for(int i = 0; i < events.length(); i++) {
             JSONObject e = events.optJSONObject(i);
             if(e == null) continue;
-            String kind = e.optString("kind");
-            toast(e.optString("text"));
-            if(kind.equals("shard_rare") || kind.equals("ejected"))
+            /* Collecting is quiet: echoids show up on Collect and shards on
+             * the Shards screen. Only being thrown out of a dungeon is news. */
+            if(e.optString("kind").equals("ejected")) {
+                toast(e.optString("text"));
                 vibrate(120);
-            else if(kind.startsWith("shard") || kind.equals("spotted"))
-                vibrate(30);
+            }
         }
     }
 

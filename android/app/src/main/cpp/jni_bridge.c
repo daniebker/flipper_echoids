@@ -285,3 +285,8 @@ JNIEXPORT jstring JNICALL JNI_FN(dungeonLeave)(JNIEnv* env, jclass cls) {
     (void)cls;
     LOCKED_JSON(engine_dungeon_leave());
 }
+
+JNIEXPORT jstring JNICALL JNI_FN(shards)(JNIEnv* env, jclass cls) {
+    (void)cls;
+    LOCKED_JSON(engine_shards_json());
+}

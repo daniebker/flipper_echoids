@@ -434,7 +434,6 @@ char* engine_take_events_json(void) {
     SessionEvent ev;
     while(session_take_event(&S, &ev)) {
         const char* kind = ev.kind == SessionEventSpotted  ? "spotted" :
-                           ev.kind == SessionEventRecharge ? "recharge" :
                            ev.kind == SessionEventEjected  ? "ejected" :
                            ev.shard.tier == ShardPrismatic ? "shard_rare" :
                                                              "shard";
@@ -561,4 +560,48 @@ char* engine_dungeon_next(void) {
 }
 char* engine_dungeon_leave(void) {
     return result(session_dungeon_leave(&S));
+}
+
+/* The shard log: devices heard this outing, newest first. */
+char* engine_shards_json(void) {
+    Json j;
+    json_init(&j);
+    json_obj(&j);
+    json_kint(&j, "collected", S.shards_this_run);
+    uint8_t cooling = 0;
+    for(uint8_t i = 0; i < S.shard_log_count; i++)
+        if(session_shard_left(&S, i)) cooling++;
+    json_kint(&j, "cooling", cooling);
+    json_key(&j, "cooldowns");
+    json_arr(&j);
+    for(uint8_t k = 0; k < SHARD_TIER_COUNT; k++) {
+        char d[16];
+        format_duration(shard_cooldown_s(k), d, sizeof(d));
+        json_obj(&j);
+        json_kstr(&j, "tier", shard_tier_name(k));
+        json_kstr(&j, "time", d);
+        json_end_obj(&j);
+    }
+    json_end_arr(&j);
+    json_key(&j, "devices");
+    json_arr(&j);
+    for(uint8_t i = 0; i < S.shard_log_count; i++) {
+        const ShardSeen* e = &S.shard_log[i];
+        uint32_t left = session_shard_left(&S, i);
+        char d[16];
+        format_duration(left, d, sizeof(d));
+        json_obj(&j);
+        json_kstr(&j, "name", e->name);
+        json_kint(&j, "typeId", e->shard.type);
+        json_kstr(&j, "type", echo_type_name(e->shard.type));
+        json_kint(&j, "tier", e->shard.tier);
+        json_kstr(&j, "tierName", shard_tier_name(e->shard.tier));
+        json_kbool(&j, "collected", e->collected);
+        json_kint(&j, "left", left);
+        json_kstr(&j, "leftText", left ? d : "");
+        json_end_obj(&j);
+    }
+    json_end_arr(&j);
+    json_end_obj(&j);
+    return json_finish(&j);
 }

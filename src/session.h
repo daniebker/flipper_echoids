@@ -27,7 +27,7 @@
 #define SESSION_NEARBY_MAX   24
 #define SESSION_SPOTTED_MAX  128
 #define SESSION_ASLEEP_MAX   64
-#define SESSION_NOTED_MAX    48
+#define SESSION_SHARDS_MAX   32 /* devices in the shard log */
 #define SESSION_RESULTS_MAX  24
 #define SESSION_RESULT_LEN   32
 #define SESSION_EVENTS_MAX   8
@@ -50,8 +50,7 @@ typedef struct {
 
 typedef enum {
     SessionEventSpotted, /* a wild echoid is out nearby (mac) */
-    SessionEventShard, /* a shard was collected (shard) */
-    SessionEventRecharge, /* a device's shard is still recharging (shard) */
+    SessionEventShard, /* a shard was collected (shard): for a blink, not a popup */
     SessionEventEjected, /* thrown out of a dungeon (the connection dropped) */
 } SessionEventKind;
 
@@ -61,6 +60,15 @@ typedef struct {
     Shard shard;
     char text[SESSION_MSG_LEN];
 } SessionEvent;
+
+/* A Bluetooth device heard while collecting, and its shard. */
+typedef struct {
+    uint8_t mac[6];
+    Shard shard;
+    bool collected; /* it gave you its shard on this outing */
+    uint32_t ready_at; /* when it can drop its shard again (RTC seconds) */
+    char name[SCAN_NAME_LEN];
+} ShardSeen;
 
 /* What the UI may offer for an item used on a team member. */
 typedef enum {
@@ -98,8 +106,8 @@ typedef struct {
     uint32_t spotted[SESSION_SPOTTED_MAX];
     uint16_t spotted_count; /* echoids seen since the app started */
     uint16_t shards_this_run;
-    uint32_t recharge_noted[SESSION_NOTED_MAX];
-    uint8_t recharge_noted_count;
+    ShardSeen shard_log[SESSION_SHARDS_MAX]; /* newest first */
+    uint8_t shard_log_count;
 
     /* Time of day */
     uint8_t hour; /* local hour, 0-23 */
@@ -154,6 +162,8 @@ void session_nearby_echoid(Session* s, uint8_t index, Echoid* out);
 /* Balls can be thrown in this battle; if not, why (else NULL). */
 const char* session_catch_blocked(Session* s);
 ItemUse session_item_use(uint8_t item);
+/* Seconds until a logged device can drop its shard again (0: ready). */
+uint32_t session_shard_left(const Session* s, uint8_t log_index);
 /* "Have" count for a recipe's output (PACs for the PAC recipe). */
 uint32_t session_recipe_have(const Session* s, size_t recipe);
 

@@ -42,6 +42,7 @@ char* engine_inventory_json(void); /* items, shards, recipes */
 char* engine_battle_json(void);
 char* engine_take_events_json(void); /* messages since the last call */
 char* engine_dungeon_json(void);
+char* engine_shards_json(void); /* shards found and devices recharging */
 
 /* ---- Actions (JSON {"ok":bool,"msg":"..."}, caller frees) ---- */
 char* engine_battle_begin(uint32_t nearby_index);

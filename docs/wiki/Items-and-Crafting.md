@@ -34,11 +34,11 @@ After a device drops its shard it has to **recharge** before it drops it again. 
 
 | Tier | Cooldown |
 |---|---|
-| Dull | 15m |
-| Bright | 1h00m |
-| Prismatic | 4h00m |
+| Dull | 3h00m |
+| Bright | 30h00m |
+| Prismatic | 12d12h |
 
-When you pass a recharging device, Collect shows how long is left (for example `Bright Tide: 42m left`), once per device per visit.
+The shortest cooldown is 3 hours, and each rarer tier takes ten times longer. Collect's **Shards** page (left/right on the Flipper, the Shards button on Android) lists every device you pass with its shard and the time left until it's ready again. Shards don't pop up.
 
 ## Recipes
 

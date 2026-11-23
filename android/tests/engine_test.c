@@ -110,6 +110,7 @@ static char* chk(char* json) {
 #define engine_set_bluetooth(a) chk(engine_set_bluetooth(a))
 #define engine_reset() chk(engine_reset())
 #define engine_dungeon_json() chk(engine_dungeon_json())
+#define engine_shards_json() chk(engine_shards_json())
 #define engine_jack_in_check(a) chk(engine_jack_in_check(a))
 #define engine_jack_in(a) chk(engine_jack_in(a))
 #define engine_dungeon_room() chk(engine_dungeon_room())
@@ -316,7 +317,15 @@ int main(void) {
     engine_tick();
     /* A few may have been pushed out of the full table; most are recharging. */
     CHECK(state("shardsFound") - shards_before < 25);
-    CHECK(contains(engine_take_events_json(), "\"kind\":\"recharge\""));
+    /* No recharge popups: the shard log lists the device with its time left. */
+    CHECK(!contains(engine_take_events_json(), "recharg"));
+    CHECK(contains(engine_shards_json(), "\"collected\":true"));
+    {
+        char* sh = engine_shards_json();
+        CHECK(field(sh, "cooling") > 20);
+        CHECK(strstr(sh, "\"leftText\":\"2h59m\"") != NULL || strstr(sh, "\"leftText\":\"3h00m\"") != NULL);
+        free(sh);
+    }
 
     /* More devices, so there are enough shards for plenty of balls and a few
      * Revive Crystals: a level 1 starter can lose its first fight. */

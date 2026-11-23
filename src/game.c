@@ -895,9 +895,9 @@ uint32_t inventory_shard_total(const Inventory* inv) {
 }
 
 static const uint32_t shard_cooldowns[SHARD_TIER_COUNT] = {
-    15u * 60u, /* Dull: 15 minutes */
-    60u * 60u, /* Bright: 1 hour */
-    4u * 60u * 60u, /* Prismatic: 4 hours */
+    3u * 3600u, /* Dull: 3 hours */
+    30u * 3600u, /* Bright: 30 hours, ten times longer */
+    300u * 3600u, /* Prismatic: 300 hours (12.5 days), ten times longer again */
 };
 
 void format_duration(uint32_t seconds, char* out, size_t size) {
@@ -906,8 +906,12 @@ void format_duration(uint32_t seconds, char* out, size_t size) {
         snprintf(out, size, "<1m");
     else if(minutes < 60u)
         snprintf(out, size, "%lum", (unsigned long)minutes);
-    else
+    else if(minutes < 48u * 60u)
         snprintf(out, size, "%luh%02lum", (unsigned long)(minutes / 60u), (unsigned long)(minutes % 60u));
+    else {
+        uint32_t hours = (minutes + 59u) / 60u; /* round up */
+        snprintf(out, size, "%lud%02luh", (unsigned long)(hours / 24u), (unsigned long)(hours % 24u));
+    }
 }
 
 uint32_t shard_cooldown_s(uint8_t tier) {

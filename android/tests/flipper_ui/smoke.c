@@ -109,8 +109,22 @@ int main(void) {
     /* 300 access points: at any hour some of their echoids are out. */
     for(int i = 0; i < 300; i++)
         wifi(i);
+    /* and some Bluetooth devices, for shards */
+    for(int i = 0; i < 6; i++) {
+        ScanEvent e;
+        memset(&e, 0, sizeof(e));
+        e.type = ScanEventBt;
+        uint8_t m[6] = {0xB0, 0x11, 0x22, 0x33, 0x44, (uint8_t)i};
+        memcpy(e.mac, m, 6);
+        e.rssi = -60;
+        snprintf(e.name, sizeof(e.name), "Buds%d", i);
+        scanner_phone_push(&e);
+    }
     usleep(1500000);
     check_screen("collect_list");
+    press(InputKeyRight); /* the Shards page */
+    check_screen("shards");
+    press(InputKeyLeft); /* back to the echoids */
     press(InputKeyOk);
     check_screen("collect_popup");
     press(InputKeyOk); /* Battle! */

@@ -34,6 +34,7 @@ final class Engine {
     static native String inventory();
     static native String battle();
     static native String takeEvents();
+    static native String shards();
 
     static native String battleBegin(int nearbyIndex);
     static native String battleMove(int slot);
