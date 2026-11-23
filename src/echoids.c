@@ -25,7 +25,7 @@
 #define TOAST_MS         2500
 #define BOARD_TIMEOUT_MS 6000
 #define TEAM_ROWS        5
-#define NEARBY_ROWS      4
+#define NEARBY_ROWS      3
 #define CRAFT_ROWS       3
 #define SPOTTED_MAX      128
 
@@ -418,17 +418,41 @@ static void draw_collect(App* app, Canvas* canvas) {
         EchoGenes g;
         echo_genes(n->mac, &g);
         char buf[24];
-        snprintf(buf, sizeof(buf), "%s%.9s", nearby_state_mark(n->state), n->ssid);
+        snprintf(buf, sizeof(buf), "%s%s", nearby_state_mark(n->state), echo_species_name(n->mac));
         canvas_draw_str(canvas, 2, y, buf);
         snprintf(buf, sizeof(buf), "L%u", echo_wild_level(n->mac, app_lead(app)->level));
-        canvas_draw_str(canvas, 60, y, buf);
-        canvas_draw_str(canvas, 78, y, echo_type_short(g.type));
+        canvas_draw_str(canvas, 58, y, buf);
+        canvas_draw_str(canvas, 76, y, echo_type_short(g.type));
         snprintf(buf, sizeof(buf), "%d", n->rssi);
         canvas_draw_str_aligned(canvas, 121, y, AlignRight, AlignBottom, buf);
     }
     canvas_set_color(canvas, ColorBlack);
     if(app->nearby_count > NEARBY_ROWS) {
-        elements_scrollbar_pos(canvas, 127, 14, 48, app->nearby_idx, app->nearby_count);
+        elements_scrollbar_pos(canvas, 127, 14, 31, app->nearby_idx, app->nearby_count);
+    }
+
+    /* Stats panel for the selected echoid, at the level it would battle at. */
+    if(app->nearby_count > 0 && app->nearby_idx < app->nearby_count) {
+        Nearby* n = &app->nearby[app->nearby_idx];
+        EchoGenes g;
+        echo_genes(n->mac, &g);
+        Echoid wild;
+        echo_init(&wild, n->mac, echo_wild_level(n->mac, app_lead(app)->level), NULL);
+        EchoStats st;
+        echo_stats(&wild, &st);
+        char buf[40];
+        canvas_draw_line(canvas, 0, 45, 127, 45);
+        snprintf(
+            buf,
+            sizeof(buf),
+            "%s %s  Lv%u",
+            echo_rarity_name(g.rarity),
+            echo_type_name(g.type),
+            wild.level);
+        canvas_draw_str(canvas, 2, 54, buf);
+        snprintf(
+            buf, sizeof(buf), "HP%u ATK%u DEF%u SPD%u", st.max_hp, st.atk, st.def, st.spd);
+        canvas_draw_str(canvas, 2, 63, buf);
     }
     draw_toast(app, canvas);
 }
