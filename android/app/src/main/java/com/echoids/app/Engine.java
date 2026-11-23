@@ -11,6 +11,9 @@ final class Engine {
 
     private Engine() {}
 
+    static final int CARD_NFC = 0;
+    static final int CARD_RFID = 1;
+
     static final int WHERE_TEAM = 0, WHERE_PAC = 1, WHERE_NEARBY = 2;
     static final int SIGHTING_WIFI = 0, SIGHTING_BLUETOOTH = 1;
 
@@ -42,6 +45,8 @@ final class Engine {
     static native String battleBall(int ball);
     static native String battleRun();
     static native String battleClose();
+    /** A scanned card starts a battle with its echoid (kind: CARD_NFC or CARD_RFID). */
+    static native String cardBattle(int kind, byte[] uid);
     static native String craft(int recipe);
     static native String useItem(int item, int teamIndex);
     static native String setLead(int teamIndex);

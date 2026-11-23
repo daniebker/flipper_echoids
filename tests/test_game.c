@@ -671,7 +671,35 @@ static void test_join_parsing(void) {
     CHECK(!scanner_ssid_matches("Anything", ""));
 }
 
+static void test_card_mac(void) {
+    const uint8_t a[] = {0x04, 0xA1, 0xB2, 0xC3};
+    const uint8_t b[] = {0x04, 0xA1, 0xB2, 0xC4};
+    uint8_t m1[6], m2[6], m3[6], m4[6], m5[6];
+    card_mac(CardNfc, a, sizeof(a), m1);
+    card_mac(CardNfc, a, sizeof(a), m2);
+    card_mac(CardNfc, b, sizeof(b), m3);
+    card_mac(CardRfid, a, sizeof(a), m4);
+    card_mac(CardNfc, a, 3, m5);
+    CHECK(memcmp(m1, m2, 6) == 0); /* same card, same echoid */
+    CHECK(memcmp(m1, m3, 6) != 0);
+    CHECK(memcmp(m1, m4, 6) != 0); /* NFC and RFID differ */
+    CHECK(memcmp(m1, m5, 6) != 0);
+    CHECK((m1[0] & 0x03) == 0x02); /* locally administered, unicast */
+    /* Cards spread over the types like access points do. */
+    unsigned types[ECHO_TYPE_COUNT] = {0};
+    for(uint32_t i = 0; i < 4000; i++) {
+        uint8_t uid[4] = {(uint8_t)i, (uint8_t)(i >> 8), 0x55, 0xAA}, m[6];
+        EchoGenes g;
+        card_mac(CardNfc, uid, sizeof(uid), m);
+        echo_genes(m, &g);
+        types[g.type]++;
+    }
+    for(int t = 0; t < ECHO_TYPE_COUNT; t++)
+        CHECK(types[t] > 4000 / ECHO_TYPE_COUNT / 2);
+}
+
 int main(void) {
+    test_card_mac();
     test_join_parsing();
     test_dungeons();
     test_shared_rules();

@@ -196,6 +196,16 @@ JNIEXPORT jstring JNICALL JNI_FN(battleClose)(JNIEnv* env, jclass cls) {
     LOCKED_JSON(engine_battle_close());
 }
 
+JNIEXPORT jstring JNICALL JNI_FN(cardBattle)(JNIEnv* env, jclass cls, jint kind, jbyteArray uid) {
+    (void)cls;
+    uint8_t buf[CARD_UID_MAX];
+    jsize len = uid ? (*env)->GetArrayLength(env, uid) : 0;
+    if(len < 0) len = 0;
+    /* Too long: the session refuses it (len stays > CARD_UID_MAX). */
+    if(len > 0) (*env)->GetByteArrayRegion(env, uid, 0, len < CARD_UID_MAX ? len : CARD_UID_MAX, (jbyte*)buf);
+    LOCKED_JSON(engine_card_battle((uint8_t)kind, buf, (uint32_t)len));
+}
+
 JNIEXPORT jstring JNICALL JNI_FN(craft)(JNIEnv* env, jclass cls, jint recipe) {
     (void)cls;
     LOCKED_JSON(engine_craft((uint32_t)recipe));

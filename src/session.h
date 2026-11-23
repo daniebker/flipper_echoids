@@ -118,6 +118,7 @@ typedef struct {
     /* Battle */
     bool in_battle;
     bool battle_in_dungeon;
+    bool battle_card; /* the wild echoid came from a scanned card */
     bool must_switch; /* the active echoid fainted: pick a replacement */
     int8_t battle_nearby;
     Battle battle;
@@ -179,6 +180,15 @@ bool session_battle_ball(Session* s, uint8_t ball);
 bool session_battle_run(Session* s);
 /* Leaves a finished battle. */
 bool session_battle_close(Session* s);
+
+/* ---- Cards ----
+ * A scanned NFC or RFID card (kind: CardKind) starts a battle with its echoid,
+ * which is always the same for the same card. Any time of day; not in a
+ * dungeon. Once its echoid is caught or defeated, the card is spent: it can't
+ * start a battle again. Running away or losing leaves it for another try. */
+bool session_card_battle(Session* s, uint8_t kind, const uint8_t* uid, uint8_t uid_len);
+/* Has this card's echoid already been caught or defeated? */
+bool session_card_spent(Session* s, uint8_t kind, const uint8_t* uid, uint8_t uid_len);
 
 /* ---- Dungeons ----
  * 1. session_jack_in_check(): may the player jack in to this nearby network?

@@ -51,6 +51,8 @@ char* engine_battle_switch(uint8_t team_index);
 char* engine_battle_ball(uint8_t ball);
 char* engine_battle_run(void);
 char* engine_battle_close(void);
+/* A scanned card (kind: CardKind) starts a battle with its echoid. */
+char* engine_card_battle(uint8_t kind, const uint8_t* uid, uint32_t uid_len);
 char* engine_craft(uint32_t recipe);
 char* engine_use_item(uint8_t item, uint8_t team_index);
 char* engine_set_lead(uint8_t team_index);

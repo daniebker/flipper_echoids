@@ -277,6 +277,109 @@ static void test_dungeon(void) {
     CHECK(!ok(engine_jack_in(0))); /* not connected any more */
 }
 
+/* The wild echoid's MAC in the current battle (as JSON text). */
+static void battle_wild_mac(char out[18]) {
+    char* b = engine_battle_json();
+    const char* w = strstr(b, "\"wild\":{");
+    const char* m = w ? strstr(w, "\"mac\":\"") : NULL;
+    memset(out, 0, 18);
+    if(m) memcpy(out, m + 7, 17);
+    free(b);
+}
+
+static int battle_is(const char* result);
+
+/* Runs from the current battle (escaping can fail; the battle may also be lost). */
+static void flee(void) {
+    for(int t = 0; t < 100 && battle_is("ongoing"); t++) {
+        if(contains(engine_battle_json(), "\"mustSwitch\":true")) {
+            for(uint8_t k = 0; k < 6; k++)
+                if(ok(engine_battle_switch(k))) break;
+        } else {
+            free(engine_battle_run());
+        }
+    }
+    CHECK(battle_is("fled") || battle_is("lost"));
+    free(engine_battle_close());
+}
+
+static int battle_is(const char* result) {
+    char pat[40];
+    snprintf(pat, sizeof(pat), "\"result\":\"%s\"", result);
+    return contains(engine_battle_json(), pat);
+}
+
+/* NFC and RFID cards: the same card gives the same echoid; once it's caught
+ * or defeated, the card is spent. Running away leaves it for another try. */
+static void test_cards(void) {
+    static const uint8_t uid_a[] = {0x04, 0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0x80};
+    static const uint8_t uid_b[] = {0xDE, 0xAD, 0xBE, 0xEF};
+    static const uint8_t uid_c[] = {0x01, 0x23, 0x45, 0x67, 0x89};
+    uint8_t too_long[CARD_UID_MAX + 1] = {0};
+    char mac1[18], mac2[18], mac3[18];
+    heal_team();
+
+    CHECK(!ok(engine_card_battle(CardNfc, uid_a, 0)));
+    CHECK(!ok(engine_card_battle(CardNfc, too_long, sizeof(too_long))));
+
+    /* Same card, same echoid; the other kind of card with the same UID differs. */
+    CHECK(ok(engine_card_battle(CardNfc, uid_a, sizeof(uid_a))));
+    CHECK(contains(engine_battle_json(), "\"fromCard\":true"));
+    CHECK(contains(engine_battle_json(), "\"origin\":\"NFC card\""));
+    CHECK(!ok(engine_card_battle(CardNfc, uid_b, sizeof(uid_b)))); /* one battle at a time */
+    battle_wild_mac(mac1);
+    flee();
+    CHECK(ok(engine_card_battle(CardNfc, uid_a, sizeof(uid_a)))); /* fled: still there */
+    battle_wild_mac(mac2);
+    CHECK(strcmp(mac1, mac2) == 0);
+    flee();
+    CHECK(ok(engine_card_battle(CardRfid, uid_a, sizeof(uid_a))));
+    battle_wild_mac(mac3);
+    CHECK(strcmp(mac1, mac3) != 0);
+    CHECK(contains(engine_battle_json(), "\"origin\":\"RFID card\""));
+    flee();
+
+    /* Defeat card A's echoid: the card is spent, even after a reload. */
+    int won = 0;
+    for(int attempt = 0; attempt < 8 && !won; attempt++) {
+        heal_team();
+        if(!ok(engine_card_battle(CardNfc, uid_a, sizeof(uid_a)))) break;
+        fight();
+        won = battle_is("won");
+        free(engine_battle_close());
+    }
+    CHECK(won);
+    CHECK(!ok(engine_card_battle(CardNfc, uid_a, sizeof(uid_a))));
+    CHECK(contains(engine_battle_json(), "\"active\":false"));
+
+    /* Catch card B's echoid: spent too. */
+    int caught = 0;
+    for(int i = 0; i < 40; i++)
+        free(engine_craft(0)); /* Echo Balls */
+    for(int attempt = 0; attempt < 8 && !caught; attempt++) {
+        heal_team();
+        if(!ok(engine_card_battle(CardNfc, uid_b, sizeof(uid_b)))) break;
+        for(int t = 0; t < 60 && battle_is("ongoing"); t++) {
+            if(contains(engine_battle_json(), "\"mustSwitch\":true")) {
+                for(uint8_t k = 0; k < 6; k++)
+                    if(ok(engine_battle_switch(k))) break;
+            } else if(!ok(engine_battle_ball(0))) {
+                free(engine_battle_move(0));
+            }
+        }
+        caught = battle_is("caught");
+        free(engine_battle_close());
+    }
+    CHECK(caught);
+    CHECK(!ok(engine_card_battle(CardNfc, uid_b, sizeof(uid_b))));
+
+    /* A card that's never been finished still works. */
+    heal_team();
+    CHECK(ok(engine_card_battle(CardRfid, uid_c, sizeof(uid_c))));
+    flee();
+    printf("cards: defeated one, caught one\n");
+}
+
 int main(void) {
     char dir[] = "/tmp/echoids-engine-XXXXXX";
     if(!mkdtemp(dir)) return 1;
@@ -406,14 +509,18 @@ int main(void) {
     /* Dungeons */
     test_dungeon();
 
+    /* NFC and RFID cards */
+    test_cards();
+
     /* Team and PAC */
     long team = state("team");
+    long pac = state("pac"); /* a caught card echoid may be there already */
     if(team >= 2) {
         CHECK(ok(engine_team_to_pac(1)));
-        CHECK(state("team") == team - 1 && state("pac") == 1);
+        CHECK(state("team") == team - 1 && state("pac") == pac + 1);
         CHECK(contains(engine_pac_json(0, 10), "\"index\":0"));
-        CHECK(ok(engine_pac_to_team(0)));
-        CHECK(state("team") == team && state("pac") == 0);
+        CHECK(ok(engine_pac_to_team((uint32_t)pac)));
+        CHECK(state("team") == team && state("pac") == pac);
         CHECK(ok(engine_set_lead(1)) && state("lead") == 1);
     }
     CHECK(contains(engine_echoid_json(0, 0), "\"rating\":{"));
@@ -426,10 +533,20 @@ int main(void) {
     engine_unload();
     CHECK(!engine_init(mac, "Phone")); /* loaded, not new */
     CHECK(state("captures") == captures && state("wins") == wins && state("team") == team);
+    {
+        static const uint8_t uid_a[] = {0x04, 0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0x80};
+        CHECK(!ok(engine_card_battle(CardNfc, uid_a, sizeof(uid_a)))); /* still spent */
+    }
 
     /* Reset starts over with just the starter */
     CHECK(ok(engine_reset()));
     CHECK(state("team") == 1 && state("captures") == 0);
+    {
+        /* A new game: every card's echoid is out there again. */
+        static const uint8_t uid_a[] = {0x04, 0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0x80};
+        CHECK(ok(engine_card_battle(CardNfc, uid_a, sizeof(uid_a))));
+        flee();
+    }
 
     CHECK(bad_json == 0);
     printf("%s (%d failure(s))\n", failures ? "FAILED" : "engine OK", failures);

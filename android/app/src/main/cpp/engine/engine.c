@@ -387,6 +387,7 @@ char* engine_battle_json(void) {
         json_key(&j, "wild");
         json_obj(&j);
         put_echoid(&j, &b->wild);
+        json_kstr(&j, "origin", b->wild.origin);
         json_end_obj(&j);
         json_key(&j, "mine");
         json_obj(&j);
@@ -400,6 +401,7 @@ char* engine_battle_json(void) {
             if(b->log[i][0]) json_str(&j, b->log[i]);
         json_end_arr(&j);
         json_kbool(&j, "inDungeon", S.battle_in_dungeon);
+        json_kbool(&j, "fromCard", S.battle_card);
         json_kbool(&j, "canRun", !S.battle_in_dungeon);
         const char* blocked = session_catch_blocked(&S);
         json_kbool(&j, "canCatch", blocked == NULL);
@@ -452,6 +454,9 @@ char* engine_take_events_json(void) {
 
 char* engine_battle_begin(uint32_t i) {
     return result(i < SESSION_NEARBY_MAX && session_battle_begin(&S, (uint8_t)i));
+}
+char* engine_card_battle(uint8_t kind, const uint8_t* uid, uint32_t uid_len) {
+    return result(uid_len <= CARD_UID_MAX && session_card_battle(&S, kind, uid, (uint8_t)uid_len));
 }
 char* engine_battle_move(uint8_t slot) {
     return result(session_battle_move(&S, slot));

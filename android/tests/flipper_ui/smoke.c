@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "card_reader_fake.h"
 #include "gui/modules/text_input.h"
 #include "scanner_phone.h"
 #include "shim.h"
@@ -175,6 +176,35 @@ int main(void) {
         printf("(the team was ejected from the dungeon)\n");
     }
     check_screen("menu_again");
+
+    /* Scan a card: its echoid comes out to battle. */
+    usleep(2600000); /* let the "Jacked out" toast clear off the bottom bar */
+    press(InputKeyDown);
+    press(InputKeyOk);
+    check_screen("card");
+    static const uint8_t uid[] = {0x04, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
+    card_reader_fake_present(CardNfc, uid, sizeof(uid));
+    usleep(400000);
+    check_screen("card_battle");
+    press(InputKeyLeft); /* Run */
+    for(int tries = 0; tries < 30 && !battle_over(); tries++)
+        press(InputKeyOk);
+    if(!battle_over()) {
+        printf("FAIL: couldn't leave the card battle\n");
+        failures++;
+    }
+    press(InputKeyOk); /* continue: back to the reader */
+    if(!battle_over()) {
+        /* The card is still on the reader: it mustn't start another battle. */
+        usleep(400000);
+        if(battle_over()) {
+            printf("FAIL: the card on the reader started a second battle\n");
+            failures++;
+        }
+    }
+    check_screen("card_again");
+    card_reader_fake_present(CardNfc, NULL, 0);
+    press(InputKeyBack); /* back to the menu, on "Scan card" */
     press(InputKeyDown);
     press(InputKeyOk);
     check_screen("team");

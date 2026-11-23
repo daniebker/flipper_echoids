@@ -370,7 +370,25 @@ press **OK** and choose **Jack in**. Type the network's password on the Flipper 
   until you jack out. Networks whose name is hidden can't be joined, and a password with
   both `"` and `'` in it can't be sent to Marauder.
 
-Progress is saved to `/ext/apps_data/echoids/save.bin`.
+### Cards
+
+NFC and RFID cards hide echoids too. On the Flipper, choose **Scan card** in the main menu
+and hold a card to the back: **Left/Right** switches between **NFC** (ISO 14443-A: MIFARE,
+NTAG, most access and transport cards) and **125 kHz RFID** (EM4100, HID Prox and the other
+formats the Flipper reads). On Android, tap **Scan a card** on Collect and hold an NFC card
+to the back of the phone (phones can't read 125 kHz RFID).
+
+- **Same card, same echoid:** the card's UID decides the echoid (for RFID, its protocol and
+  data too). Its level follows your lead, like a wild echoid's.
+- **Any time:** card echoids aren't tied to the time of day, and scanning WiFi isn't needed.
+- **Once only:** after you catch or defeat a card's echoid, that card is spent and can't start
+  a battle again. Running away, or losing, leaves it for another try.
+- A card left on the reader after its battle doesn't start another one: take it away and
+  hold it there again.
+- Starting a new game makes every card's echoid available again.
+
+Progress is saved to `/ext/apps_data/echoids/save.bin`; spent cards are listed in `cards.bin`
+next to it.
 
 ## Board setup and troubleshooting
 
@@ -474,6 +492,8 @@ src/scanner.[ch]       UART link to the ESP32 board and scan cycling
 src/scanner_parse.c    Marauder / CSV line parser (no SDK)
 src/save.[ch]          Save file (team, items, settings) and upgrades from old versions
 src/pac_store.[ch]     PAC storage file on the SD card (unlimited stored echoids)
+src/card_store.[ch]    Cards whose echoid was caught or defeated (cards.bin)
+src/card_reader.[ch]   Flipper NFC and 125 kHz RFID card reading (Flipper only)
 tests/test_game.c      Host-side unit tests
 android/               Android app: native Java UI and radios (app/src/main/java), and a
                        JSON view of src/session.c plus the JNI bridge (app/src/main/cpp)

@@ -114,6 +114,17 @@ uint32_t game_rand_range(uint32_t n); /* 0..n-1 */
 
 /* ---------- Deterministic generation ---------- */
 uint32_t echo_hash_mac(const uint8_t mac[6]);
+
+/* ---------- Cards (NFC and 125 kHz RFID) ----------
+ * A scanned card's echoid has a made-up MAC derived from the card's UID (and,
+ * for RFID, its protocol), so the same card always gives the same echoid.
+ * It's a locally administered address, so it never clashes with a real one. */
+typedef enum {
+    CardNfc,
+    CardRfid,
+} CardKind;
+#define CARD_UID_MAX 32
+void card_mac(uint8_t kind, const uint8_t* uid, uint8_t uid_len, uint8_t out[6]);
 void echo_genes(const uint8_t mac[6], EchoGenes* out);
 const char* echo_species_name(const uint8_t mac[6]);
 /* The echoid's own name, generated from its MAC with a Markov chain trained

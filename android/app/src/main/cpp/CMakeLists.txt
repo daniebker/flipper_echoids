@@ -17,6 +17,7 @@ add_library(echoids SHARED
     ${GAME_SRC}/session.c
     ${GAME_SRC}/save.c
     ${GAME_SRC}/pac_store.c
+    ${GAME_SRC}/card_store.c
 )
 
 target_include_directories(echoids PRIVATE

@@ -10,6 +10,7 @@
 #include <furi.h>
 #include <furi_hal.h>
 
+#include "card_store.h"
 #include "pac_store.h"
 
 #define LEARNED_MAX 8 /* moves one battle or crystal can teach, at most */
@@ -134,6 +135,7 @@ static void new_game(Session* s) {
     sv->pacs = 1; /* room for PAC_SIZE echoids to start */
     sv->pac_count = 0;
     pac_clear();
+    card_clear(); /* every card's echoid is out there again */
     s->dirty = true;
 }
 
@@ -496,11 +498,13 @@ static void after_action(Session* s) {
         }
         if(stored) sv->captures++;
         if(n && (stored || session_owns(s, caught.mac))) n->state = NearbyOwned;
+        if(s->battle_card && (stored || session_owns(s, caught.mac))) card_mark_done(caught.mac);
         break;
     }
     case BattleWon:
         s->save.wins++;
         if(n) n->state = NearbyDone;
+        if(s->battle_card) card_mark_done(b->wild.mac);
         if(s->battle_in_dungeon) s->dungeon.room_done = true;
         break;
     case BattleFled:
@@ -565,6 +569,7 @@ bool session_battle_begin(Session* s, uint8_t index) {
     battle_start(&s->battle, first, n->mac, echo_wild_level(n->mac, session_lead(s)->level), n->ssid);
     s->battle_nearby = (int8_t)index;
     s->battle_in_dungeon = false;
+    s->battle_card = false;
     s->in_battle = true;
     s->must_switch = false;
     s->result_count = 0;
@@ -630,6 +635,7 @@ bool session_battle_close(Session* s) {
     s->in_battle = false;
     s->must_switch = false;
     s->battle_nearby = -1;
+    s->battle_card = false;
     if(s->battle_in_dungeon) {
         s->battle_in_dungeon = false;
         if(s->battle.result == BattleLost)
@@ -638,6 +644,51 @@ bool session_battle_close(Session* s) {
             dungeon_eject(s, "Connection lost: ejected!");
     }
     session_save(s);
+    return true;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Cards                                                                     */
+/* ------------------------------------------------------------------------- */
+
+bool session_card_spent(Session* s, uint8_t kind, const uint8_t* uid, uint8_t uid_len) {
+    uint8_t mac[6];
+    card_mac(kind, uid, uid_len, mac);
+    return card_done(mac) || session_owns(s, mac);
+}
+
+bool session_card_battle(Session* s, uint8_t kind, const uint8_t* uid, uint8_t uid_len) {
+    if(s->in_battle) FAIL(s, "Already in a battle");
+    if(s->dungeon.active) FAIL(s, "Jack out first");
+    if(uid_len == 0 || uid_len > CARD_UID_MAX) FAIL(s, "Couldn't read that card");
+    uint8_t mac[6];
+    card_mac(kind, uid, uid_len, mac);
+    if(session_owns(s, mac)) {
+        card_mark_done(mac);
+        FAIL(s, "Already caught this card's echoid");
+    }
+    if(card_done(mac)) FAIL(s, "This card's echoid is gone");
+    /* The lead fights; if it has fainted, the first healthy team member does. */
+    Echoid* first = session_lead(s);
+    if(first->hp == 0) {
+        first = NULL;
+        for(uint8_t i = 0; i < s->save.team_count && !first; i++)
+            if(s->save.team[i].hp > 0) first = &s->save.team[i];
+    }
+    if(!first) FAIL(s, "All fainted: use Revives");
+    battle_start(
+        &s->battle,
+        first,
+        mac,
+        echo_wild_level(mac, session_lead(s)->level),
+        kind == CardRfid ? "RFID card" : "NFC card");
+    s->battle_nearby = -1;
+    s->battle_in_dungeon = false;
+    s->battle_card = true;
+    s->in_battle = true;
+    s->must_switch = false;
+    s->result_count = 0;
+    s->msg[0] = '\0';
     return true;
 }
 
@@ -759,6 +810,7 @@ bool session_dungeon_room(Session* s) {
         battle_start(&s->battle, first, foe.mac, foe.level, d->ssid);
         s->battle_nearby = -1;
         s->battle_in_dungeon = true;
+        s->battle_card = false;
         s->in_battle = true;
         s->must_switch = false;
         s->result_count = 0;

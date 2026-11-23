@@ -56,6 +56,11 @@ public final class MainActivity extends Activity {
     WifiLink link;
     private Vibrator vibrator;
     private boolean visible;
+    CardReader cards; /* set in onCreate: it needs the activity's context */
+    /* The last card scanned, so a card still on the phone after its battle
+     * doesn't start another one straight away. */
+    private byte[] lastCard;
+    private long cardsArmedAt;
     private long lastSecond;
     /* While the user touches a page, and briefly after (a fling), don't rebuild it. */
     private boolean touching;
@@ -83,6 +88,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        cards = new CardReader(this, this::onCard);
         vibrator = (Vibrator)getSystemService(Context.VIBRATOR_SERVICE);
         radios = new RadioScanner(this);
         link = new WifiLink(this);
@@ -130,6 +136,8 @@ public final class MainActivity extends Activity {
     protected void onPause() {
         super.onPause();
         visible = false;
+        cards.update(false);
+        cardsOn = false;
         handler.removeCallbacks(tick);
         radios.stop();
         Engine.save();
@@ -207,6 +215,10 @@ public final class MainActivity extends Activity {
             });
         }
         setTitle(s.title());
+        boolean wantCards = visible && s instanceof CardScreen;
+        if(wantCards && !cardsOn) cardsArmedAt = System.currentTimeMillis();
+        cardsOn = wantCards;
+        cards.update(wantCards);
         if(getActionBar() != null) getActionBar().setDisplayHomeAsUpEnabled(!stack.isEmpty());
         /* Keep the screen on while scanning or battling. */
         JSONObject st = Ui.obj(Engine.state());
@@ -324,6 +336,21 @@ public final class MainActivity extends Activity {
     void toast(String msg) {
         if(msg == null || msg.isEmpty()) return;
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
+    }
+
+    private boolean cardsOn;
+
+    /** A card was tapped on the card screen: battle its echoid. */
+    private void onCard(byte[] uid) {
+        if(!(current() instanceof CardScreen)) return;
+        boolean again = lastCard != null && java.util.Arrays.equals(uid, lastCard) &&
+                        System.currentTimeMillis() - cardsArmedAt < 2000;
+        lastCard = uid;
+        if(again) return;
+        if(act(Engine.cardBattle(Engine.CARD_NFC, uid))) {
+            vibrate(60);
+            push(new BattleScreen(this));
+        }
     }
 
     /** Shows an action's message and refreshes. Returns whether it succeeded. */
