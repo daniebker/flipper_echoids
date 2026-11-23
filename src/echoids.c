@@ -44,6 +44,7 @@ typedef enum {
     ScreenBoard,
     ScreenTerminal,
     ScreenCalibrate,
+    ScreenUseOn, /* pick which echoid a Tonic / Crystal is used on */
 } Screen;
 
 typedef enum {
@@ -94,6 +95,9 @@ typedef struct {
     uint8_t craft_scroll;
     uint8_t bag_tab;
     uint8_t bag_idx;
+    uint8_t use_item_id;
+    uint8_t use_idx;
+    uint8_t use_scroll;
     uint8_t settings_idx;
     bool confirm_reset;
     uint8_t help_scroll;
@@ -526,12 +530,17 @@ static void draw_ball_pick(App* app, Canvas* canvas) {
     }
 }
 
-static void draw_team(App* app, Canvas* canvas) {
+static void draw_team_list(
+    App* app,
+    Canvas* canvas,
+    const char* title,
+    const char* right,
+    uint8_t sel,
+    uint8_t scroll) {
     char buf[32];
-    snprintf(buf, sizeof(buf), "%u/%u", app->save.team_count, MAX_TEAM);
-    draw_title(canvas, "Team", buf);
+    draw_title(canvas, title, right);
     for(uint8_t row = 0; row < TEAM_ROWS; row++) {
-        uint8_t i = app->team_scroll + row;
+        uint8_t i = scroll + row;
         if(i >= app->save.team_count) break;
         Echoid* e = &app->save.team[i];
         EchoGenes g;
@@ -539,7 +548,7 @@ static void draw_team(App* app, Canvas* canvas) {
         EchoStats s;
         echo_stats(e, &s);
         int y = 22 + row * 10;
-        draw_row(canvas, y, i == app->team_idx);
+        draw_row(canvas, y, i == sel);
         snprintf(buf, sizeof(buf), "%s%s", i == app->save.lead ? ">" : " ", echo_species_name(e->mac));
         canvas_draw_str(canvas, 2, y, buf);
         snprintf(buf, sizeof(buf), "L%u", e->level);
@@ -555,8 +564,27 @@ static void draw_team(App* app, Canvas* canvas) {
     }
     canvas_set_color(canvas, ColorBlack);
     if(app->save.team_count > TEAM_ROWS) {
-        elements_scrollbar_pos(canvas, 127, 14, 48, app->team_idx, app->save.team_count);
+        elements_scrollbar_pos(canvas, 127, 14, 48, sel, app->save.team_count);
     }
+}
+
+static void draw_team(App* app, Canvas* canvas) {
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%u/%u", app->save.team_count, MAX_TEAM);
+    draw_team_list(app, canvas, "Team", buf, app->team_idx, app->team_scroll);
+}
+
+static void draw_use_on(App* app, Canvas* canvas) {
+    char buf[16];
+    snprintf(buf, sizeof(buf), "x%u", app->save.inv.items[app->use_item_id]);
+    draw_team_list(
+        app,
+        canvas,
+        app->use_item_id == ItemTonic ? "Heal who?" : "Crystal on?",
+        buf,
+        app->use_idx,
+        app->use_scroll);
+    draw_toast(app, canvas);
 }
 
 static void draw_detail(App* app, Canvas* canvas) {
@@ -770,6 +798,9 @@ static void draw_callback(Canvas* canvas, void* ctx) {
         break;
     case ScreenCalibrate:
         draw_calibrate(app, canvas);
+        break;
+    case ScreenUseOn:
+        draw_use_on(app, canvas);
         break;
     }
     furi_mutex_release(app->mutex);
@@ -1405,43 +1436,47 @@ static void battle_after_action(App* app) {
     app->dirty = true;
 }
 
-static void use_item(App* app, uint8_t item) {
+/* Uses a Tonic or Echo Crystal on one team member. Returns true if used. */
+static bool use_item_on(App* app, uint8_t item, Echoid* target) {
     Inventory* inv = &app->save.inv;
-    Echoid* lead = app_lead(app);
     EchoStats s;
-    echo_stats(lead, &s);
+    echo_stats(target, &s);
+    const char* name = echo_species_name(target->mac);
     char msg[40];
     if(inv->items[item] == 0) {
         app_toast(app, "You have none");
-        return;
+        return false;
     }
     if(item == ItemTonic) {
-        if(lead->hp >= s.max_hp) {
-            app_toast(app, "Lead is already healthy");
-            return;
+        if(target->hp >= s.max_hp) {
+            snprintf(msg, sizeof(msg), "%s is at full HP", name);
+            app_toast(app, msg);
+            return false;
         }
-        lead->hp = s.max_hp;
+        target->hp = s.max_hp;
         inv->items[item]--;
-        app_toast(app, "Lead fully healed!");
+        snprintf(msg, sizeof(msg), "%s fully healed!", name);
+        app_toast(app, msg);
     } else if(item == ItemCrystal) {
-        if(lead->level >= MAX_LEVEL) {
-            app_toast(app, "Lead is max level");
-            return;
+        if(target->level >= MAX_LEVEL) {
+            snprintf(msg, sizeof(msg), "%s is max level", name);
+            app_toast(app, msg);
+            return false;
         }
         inv->items[item]--;
-        uint16_t xp = echo_xp_to_next(lead->level) / 2;
-        uint8_t lv = echo_add_xp(lead, xp);
+        uint16_t xp = echo_xp_to_next(target->level) / 2;
+        uint8_t lv = echo_add_xp(target, xp);
         if(lv)
-            snprintf(msg, sizeof(msg), "+%u XP! Now Lv%u", xp, lead->level);
+            snprintf(msg, sizeof(msg), "%s +%u XP! Lv%u", name, xp, target->level);
         else
-            snprintf(msg, sizeof(msg), "+%u XP", xp);
+            snprintf(msg, sizeof(msg), "%s +%u XP", name, xp);
         app_toast(app, msg);
     } else {
-        app_toast(app, "Use balls in battle");
-        return;
+        return false;
     }
     notification_message(app->notif, &sequence_success);
     app->dirty = true;
+    return true;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -1601,7 +1636,20 @@ static void handle_input(App* app, InputEvent* ev) {
         } else if(dy && app->bag_tab == 0) {
             app->bag_idx = (uint8_t)((app->bag_idx + ItemCount + dy) % ItemCount);
         } else if(press && ev->key == InputKeyOk && app->bag_tab == 0) {
-            use_item(app, app->bag_idx);
+            uint8_t item = app->bag_idx;
+            if(item != ItemTonic && item != ItemCrystal) {
+                app_toast(app, "Use balls in battle");
+            } else if(app->save.inv.items[item] == 0) {
+                app_toast(app, "You have none");
+            } else {
+                /* Choose who to use it on, starting at the lead. */
+                app->use_item_id = item;
+                app->use_idx = app->save.lead;
+                app->use_scroll = 0;
+                list_move(&app->use_idx, &app->use_scroll, app->save.team_count, TEAM_ROWS, 0);
+                app->toast_until = 0;
+                app->screen = ScreenUseOn;
+            }
         } else if(press && ev->key == InputKeyBack) {
             app->screen = ScreenMenu;
         }
@@ -1650,6 +1698,19 @@ static void handle_input(App* app, InputEvent* ev) {
 
     case ScreenTerminal:
         terminal_input(app, ev, press);
+        break;
+
+    case ScreenUseOn:
+        if(dy) {
+            list_move(&app->use_idx, &app->use_scroll, app->save.team_count, TEAM_ROWS, dy);
+        } else if(press && ev->key == InputKeyOk) {
+            /* On success go back to the Bag (the toast shows there); on a
+             * refusal (already healthy, max level) stay so another can be picked. */
+            if(use_item_on(app, app->use_item_id, &app->save.team[app->use_idx]))
+                app->screen = ScreenBag;
+        } else if(press && ev->key == InputKeyBack) {
+            app->screen = ScreenBag;
+        }
         break;
 
     case ScreenCalibrate:
