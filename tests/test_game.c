@@ -419,6 +419,42 @@ static void test_names(void) {
     CHECK(strlen(tiny) == 2);
 }
 
+static void test_active_hours(void) {
+    uint8_t mac[6] = {0x10, 0x20, 0x30, 0x40, 0x50, 0x60};
+    CHECK(echo_active_hours(mac) == echo_active_hours(mac)); /* same MAC, same hours */
+    uint32_t hours_by_rarity[RarityCount] = {0}, count_by_rarity[RarityCount] = {0};
+    uint32_t active_per_hour[24] = {0};
+    for(uint32_t i = 0; i < 5000; i++) {
+        uint8_t m[6] = {0x33, (uint8_t)(i >> 16), (uint8_t)(i >> 8), (uint8_t)i, 0x44, 0x55};
+        uint32_t mask = echo_active_hours(m);
+        CHECK(mask != 0 && mask < (1u << 24)); /* out at least one hour, only 24 bits */
+        EchoGenes g;
+        echo_genes(m, &g);
+        uint32_t n = 0;
+        for(uint8_t h = 0; h < 24; h++) {
+            bool on = (mask >> h) & 1u;
+            CHECK(on == echo_active_at(m, h));
+            if(on) {
+                n++;
+                active_per_hour[h]++;
+            }
+        }
+        hours_by_rarity[g.rarity] += n;
+        count_by_rarity[g.rarity]++;
+    }
+    /* Rarer echoids are out for less of the day */
+    for(int r = 1; r < RarityCount; r++)
+        if(count_by_rarity[r] && count_by_rarity[r - 1])
+            CHECK(hours_by_rarity[r] * count_by_rarity[r - 1] <
+                  hours_by_rarity[r - 1] * count_by_rarity[r]);
+    /* Every hour of the day has echoids about */
+    for(int h = 0; h < 24; h++)
+        CHECK(active_per_hour[h] > 5000 / 10);
+    printf("hours out per day: common %.1f, legendary %.1f\n",
+           (double)hours_by_rarity[0] / count_by_rarity[0],
+           (double)hours_by_rarity[RarityLegendary] / count_by_rarity[RarityLegendary]);
+}
+
 static void test_type_chart(void) {
     CHECK(echo_type_mult(EchoTypeTide, EchoTypeEmber) == 200);
     CHECK(echo_type_mult(EchoTypeEmber, EchoTypeTide) == 50);
@@ -499,6 +535,7 @@ int main(void) {
     test_moves();
     test_tonics();
     test_names();
+    test_active_hours();
     if(failures) {
         printf("%d failure(s)\n", failures);
         return 1;

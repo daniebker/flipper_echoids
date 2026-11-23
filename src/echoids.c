@@ -7,6 +7,7 @@
  */
 #include <furi.h>
 #include <furi_hal.h>
+#include <furi_hal_rtc.h>
 #include <gui/gui.h>
 #include <gui/elements.h>
 #include <input/input.h>
@@ -33,6 +34,7 @@
 #define RESULT_LINES_MAX   24
 #define RESULT_ROWS        5
 #define BAG_ROWS           5
+#define ASLEEP_MAX         64
 
 typedef enum {
     ScreenIntro,
@@ -161,6 +163,12 @@ typedef struct {
     char toast[40];
     uint32_t toast_until;
     bool toast_important; /* a "+1 shard" popup: don't cover it with a recharge note */
+
+    /* Time of day: wild echoids only come out at certain hours. */
+    uint8_t hour; /* current local hour, 0-23 */
+    uint8_t hour_checked; /* hour the nearby list was last pruned for */
+    uint32_t asleep[ASLEEP_MAX]; /* MAC hashes heard this hour but not out now */
+    uint16_t asleep_count;
 
     /* Devices whose "recharging" popup was already shown this Collect visit. */
     uint32_t recharge_noted[RECHARGE_NOTED_MAX];
@@ -480,6 +488,18 @@ static void draw_collect(App* app, Canvas* canvas) {
             canvas_draw_str_aligned(canvas, 64, 38, AlignCenter, AlignCenter, "Settings > Board setup");
         } else if(scanner_booting(app->scanner)) {
             canvas_draw_str_aligned(canvas, 64, 32, AlignCenter, AlignCenter, "Powering up board...");
+        } else if(app->asleep_count > 0) {
+            /* Access points were heard, but their echoids aren't out at this hour. */
+            char info[40];
+            snprintf(
+                info,
+                sizeof(info),
+                "%u echo%s asleep at %02u:00",
+                app->asleep_count,
+                app->asleep_count == 1 ? "id" : "ids",
+                app->hour);
+            canvas_draw_str_aligned(canvas, 64, 28, AlignCenter, AlignCenter, info);
+            canvas_draw_str_aligned(canvas, 64, 40, AlignCenter, AlignCenter, "Come back at another hour!");
         } else if(app->save.source == ScanSourceDemo) {
             canvas_draw_str_aligned(canvas, 64, 32, AlignCenter, AlignCenter, "Listening for echoes...");
         } else {
@@ -1037,6 +1057,10 @@ static const char* const help_lines[] = {
     "WiFi access points are wild",
     "echoids. The MAC decides",
     "species, type and stats.",
+    "Each echoid only comes out",
+    "at certain hours of the",
+    "day: come back at another",
+    "time to meet others.",
     "Pick one and press OK to",
     "battle it.",
     "",
@@ -1662,7 +1686,44 @@ static void collect_stop(App* app) {
     if(app->dirty) app_save(app);
 }
 
+static uint8_t app_hour(void) {
+    DateTime dt;
+    furi_hal_rtc_get_datetime(&dt);
+    return dt.hour % 24;
+}
+
+/* Remember an access point whose echoid is asleep at this hour (for the count). */
+static void note_asleep(App* app, const uint8_t mac[6]) {
+    uint32_t h = echo_hash_mac(mac);
+    uint16_t known = app->asleep_count < ASLEEP_MAX ? app->asleep_count : ASLEEP_MAX;
+    for(uint16_t i = 0; i < known; i++)
+        if(app->asleep[i] == h) return;
+    if(app->asleep_count < ASLEEP_MAX) app->asleep[app->asleep_count] = h;
+    if(app->asleep_count < UINT16_MAX) app->asleep_count++;
+}
+
+/* Drops nearby echoids that aren't out at the current hour. */
+static void nearby_prune_hour(App* app) {
+    uint8_t keep = 0;
+    for(uint8_t i = 0; i < app->nearby_count; i++) {
+        if(echo_active_at(app->nearby[i].mac, app->hour)) {
+            app->nearby[keep++] = app->nearby[i];
+        } else {
+            note_asleep(app, app->nearby[i].mac);
+        }
+    }
+    app->nearby_count = keep;
+    app->nearby_next_replace = 0;
+    if(app->nearby_idx >= keep) app->nearby_idx = keep ? keep - 1 : 0;
+    if(app->nearby_scroll > app->nearby_idx) app->nearby_scroll = app->nearby_idx;
+}
+
 static void handle_ap(App* app, const ScanEvent* ev) {
+    /* Echoids only come out at certain hours of the day. */
+    if(!echo_active_at(ev->mac, app->hour)) {
+        note_asleep(app, ev->mac);
+        return;
+    }
     for(uint8_t i = 0; i < app->nearby_count; i++) {
         if(memcmp(app->nearby[i].mac, ev->mac, 6) == 0) {
             app->nearby[i].rssi = ev->rssi;
@@ -1759,6 +1820,10 @@ static void battle_begin(App* app) {
     }
     if(n->state == NearbyDone) {
         app_toast(app, "Already fought - find others");
+        return;
+    }
+    if(!echo_active_at(n->mac, app->hour)) {
+        app_toast(app, "It went to sleep...");
         return;
     }
     /* The lead fights; if it has fainted, the first healthy team member does. */
@@ -2542,6 +2607,14 @@ static void handle_input(App* app, InputEvent* ev) {
 static void app_tick(App* app) {
     uint32_t now = furi_get_tick();
 
+    /* A new hour brings different echoids (wait until any battle is over). */
+    app->hour = app_hour();
+    if(app->hour != app->hour_checked && !app_in_battle(app)) {
+        app->hour_checked = app->hour;
+        app->asleep_count = 0;
+        nearby_prune_hour(app);
+    }
+
     ScanEvent ev;
     bool debug = app->screen == ScreenTerminal || app->screen == ScreenCalibrate;
     for(int i = 0; i < 8 && scanner_poll(app->scanner, &ev); i++) {
@@ -2593,6 +2666,8 @@ int32_t echoids_app(void* p) {
     }
     app->last_regen = furi_get_tick();
     app->last_save = furi_get_tick();
+    app->hour = app_hour();
+    app->hour_checked = app->hour;
 
     app->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     app->queue = furi_message_queue_alloc(8, sizeof(InputEvent));

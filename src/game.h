@@ -171,6 +171,11 @@ uint16_t echo_xp_to_next(uint8_t level);
 uint8_t echo_add_xp(Echoid* e, uint32_t xp);
 /* Wild creatures keep their MAC-derived genes but scale near the player's lead. */
 uint8_t echo_wild_level(const uint8_t mac[6], uint8_t lead_level);
+/* Wild echoids only come out at certain hours: a 24-bit mask (bit h = hour h,
+ * local time) of one or two daily windows. Rarer echoids are out for less
+ * time. Always the same for the same MAC. */
+uint32_t echo_active_hours(const uint8_t mac[6]);
+bool echo_active_at(const uint8_t mac[6], uint8_t hour);
 /* Damage multiplier in percent: 200 strong, 100 neutral, 50 resisted. */
 uint8_t echo_type_mult(uint8_t attacker, uint8_t defender);
 uint8_t echo_capture_chance(const Echoid* wild, uint8_t ball);

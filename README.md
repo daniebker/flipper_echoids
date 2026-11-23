@@ -184,6 +184,31 @@ one too. On an echoid's details screen, **↑/↓** switches to its **Moves** pa
 current moves and the next one it will learn. Wild echoids use moves the same way, and they
 usually pick the one that hurts your echoid most.
 
+### Time of day
+
+Wild echoids only come out at **certain hours of the day**, so you don't meet every access point
+every time you scan:
+
+- Each echoid has one or two daily windows when it's out, worked out from its MAC address, so
+  they never change. Rarer echoids are out for less of the day:
+
+  | Rarity | Hours per window | Typical hours out per day |
+  |---|---|---|
+  | Common | 4–6 | about 7 |
+  | Uncommon | 3–5 | about 6 |
+  | Rare | 2–4 | about 4½ |
+  | Epic | 2–3 | about 3½ |
+  | Legendary | 1–2 | about 2 |
+
+- It uses the hour on the Flipper's clock. **Coming back at the same time of day gives the
+  same encounters, and a different time gives different ones.**
+- Access points whose echoid is asleep don't appear in Collect. If nothing is out, Collect
+  says how many echoids are asleep (for example `5 echoids asleep at 14:00`), so you know
+  the scan is working.
+- When the hour changes, echoids that go to sleep leave the list and new ones can appear.
+  If you're in a battle at the time, the list updates once the battle ends.
+- This only affects wild echoids. Bluetooth shards and the echoids you own aren't affected.
+
 ### Catching and levelling
 
 - The catch chance depends on rarity (Common 60%, down to Legendary 8%), the ball, and

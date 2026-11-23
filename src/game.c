@@ -595,6 +595,29 @@ uint8_t echo_wild_level(const uint8_t mac[6], uint8_t lead_level) {
     return (uint8_t)level;
 }
 
+/* Window length in hours (min, max) by rarity. */
+static const uint8_t active_len[RarityCount][2] = {{4, 6}, {3, 5}, {2, 4}, {2, 3}, {1, 2}};
+
+uint32_t echo_active_hours(const uint8_t mac[6]) {
+    EchoGenes g;
+    echo_genes(mac, &g);
+    MacStream st = {.s = g.seed ^ 0x74696D65u /* "time" */};
+    uint8_t windows = 1 + (uint8_t)(mac_stream_next(&st) % 2);
+    uint32_t mask = 0;
+    for(uint8_t w = 0; w < windows; w++) {
+        uint8_t start = (uint8_t)(mac_stream_next(&st) % 24);
+        uint8_t lo = active_len[g.rarity][0], hi = active_len[g.rarity][1];
+        uint8_t len = (uint8_t)(lo + mac_stream_next(&st) % (uint32_t)(hi - lo + 1));
+        for(uint8_t h = 0; h < len; h++)
+            mask |= 1u << ((start + h) % 24);
+    }
+    return mask;
+}
+
+bool echo_active_at(const uint8_t mac[6], uint8_t hour) {
+    return (echo_active_hours(mac) >> (hour % 24)) & 1u;
+}
+
 uint8_t echo_type_mult(uint8_t attacker, uint8_t defender) {
     attacker %= ECHO_TYPE_COUNT;
     defender %= ECHO_TYPE_COUNT;
