@@ -1,0 +1,68 @@
+name: Android
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  native-smoke-test:
+    name: Native tests (PC)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the Flipper UI on the SDK shim
+        run: |
+          C=android/app/src/main/cpp
+          T=android/tests/flipper_ui
+          gcc -std=gnu11 -O1 -g -fsanitize=address,undefined -Wall -Wextra -Wno-unused-parameter \
+            -Wno-format-truncation -I$C/shim -I$T -Isrc \
+            src/game.c src/session.c src/echoids.c src/save.c src/pac_store.c src/scanner_parse.c \
+            $T/scanner_phone.c $T/shim_text_input.c $C/shim/shim_core.c $T/shim_gui.c $T/smoke.c \
+            -lpthread -o smoke
+          ./smoke
+      - name: Test the Android app's game engine
+        run: |
+          C=android/app/src/main/cpp
+          gcc -std=gnu11 -O1 -g -fsanitize=address,undefined -Wall -Wextra -Wno-unused-parameter \
+            -I$C/shim -I$C/engine -I$C -Isrc \
+            $C/engine/engine.c $C/engine/json.c $C/shim/shim_core.c \
+            src/game.c src/session.c src/save.c src/pac_store.c android/tests/engine_test.c \
+            -lpthread -o engine_test
+          ./engine_test
+
+  apk:
+    name: Build APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build debug and release APKs
+        working-directory: android
+        run: ./gradlew --no-daemon assembleDebug assembleRelease
+      - name: Collect APKs
+        run: |
+          mkdir -p apk
+          cp android/app/build/outputs/apk/release/app-release.apk apk/echoids.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk apk/echoids-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: echoids-android-apk
+          path: apk/
+      - name: Summary
+        run: |
+          {
+            echo "### Android app"
+            echo ""
+            echo "Artifact **echoids-android-apk** contains:"
+            echo ""
+            echo "| File | Size | |"
+            echo "|---|---|---|"
+            echo "| \`echoids.apk\` | $(du -h apk/echoids.apk | cut -f1) | Release build: install this one |"
+            echo "| \`echoids-debug.apk\` | $(du -h apk/echoids-debug.apk | cut -f1) | Debug build |"
+            echo ""
+            echo "Android 7.0 or newer. Allow installs from your browser or file manager, then allow Location and Nearby devices when the app asks."
+          } >> "$GITHUB_STEP_SUMMARY"

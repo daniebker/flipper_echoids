@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Android 15 draws apps that target it edge to edge, behind the status,
+         action and navigation bars, which hid the top of every page (and the
+         Start button) and put the tab bar under the gesture bar. Keep the
+         normal layout instead. -->
+    <style name="EchoidsTheme" parent="@android:style/Theme.Material">
+        <item name="android:colorPrimary">#1C1C20</item>
+        <item name="android:colorPrimaryDark">#121214</item>
+        <item name="android:colorAccent">#FF8200</item>
+        <item name="android:windowBackground">#121214</item>
+        <item name="android:navigationBarColor">#1C1C20</item>
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
+    </style>
+</resources>

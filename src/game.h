@@ -1,0 +1,354 @@
+/*
+ * Echoids - core game logic.
+ *
+ * This module is deliberately free of any Flipper SDK dependency so that the
+ * deterministic generation, crafting and battle rules can be unit tested on a
+ * desktop machine (see tests/test_game.c).
+ */
+#pragma once
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#define ECHO_TYPE_COUNT  8
+#define SHARD_TIER_COUNT 3
+#define PARTY_MAX        6 /* echoids carried in the team */
+#define PAC_SIZE         10 /* echoids stored per crafted PAC (no limit on PACs) */
+#define ECHO_FLAG_PARTY  0x01 /* Echoid.flags: in the team (else in the PAC) */
+#define MAX_LEVEL        100
+#define NAME_LEN         18
+#define SPRITE_SIZE      16
+
+/* Type cycle: each type is strong against the next one in the list. */
+typedef enum {
+    EchoTypeTide,
+    EchoTypeEmber,
+    EchoTypeFlora,
+    EchoTypeStone,
+    EchoTypeSpark,
+    EchoTypeGale,
+    EchoTypePulse,
+    EchoTypeVoid,
+} EchoType;
+
+typedef enum {
+    RarityCommon,
+    RarityUncommon,
+    RarityRare,
+    RarityEpic,
+    RarityLegendary,
+    RarityCount,
+} Rarity;
+
+typedef enum {
+    ShardDull,
+    ShardBright,
+    ShardPrismatic,
+} ShardTier;
+
+typedef enum {
+    ItemEchoBall,
+    ItemGreatBall,
+    ItemPrismBall,
+    ItemTonic, /* +20 HP */
+    ItemCrystal,
+    /* Added later: appended so saved item counts keep their meaning. */
+    ItemSuperTonic, /* +50 HP */
+    ItemMegaTonic, /* +100 HP */
+    ItemMaxTonic, /* full HP */
+    ItemRevive, /* brings a fainted echoid back with 1 HP */
+    ItemCount,
+} ItemId;
+
+/* Saved item slots: room for new items without changing the save format. */
+#define ITEM_SLOTS 16
+
+/* Everything that is fixed for a given MAC address. */
+typedef struct {
+    uint32_t seed;
+    uint8_t type;
+    uint8_t species;
+    uint8_t rarity;
+    uint8_t base_hp;
+    uint8_t base_atk;
+    uint8_t base_def;
+    uint8_t base_spd;
+} EchoGenes;
+
+/* A creature instance (this is what gets saved). */
+typedef struct {
+    uint8_t mac[6];
+    uint8_t level;
+    uint8_t flags;
+    uint16_t xp;
+    uint16_t hp;
+    char origin[NAME_LEN];
+} Echoid;
+
+typedef struct {
+    uint16_t max_hp;
+    uint16_t atk;
+    uint16_t def;
+    uint16_t spd;
+} EchoStats;
+
+typedef struct {
+    uint8_t type;
+    uint8_t tier;
+} Shard;
+
+typedef struct {
+    uint16_t shards[ECHO_TYPE_COUNT][SHARD_TIER_COUNT];
+    uint16_t items[ITEM_SLOTS];
+} Inventory;
+
+/* HP a healing item restores: 0 for non-tonics, ITEM_HEAL_FULL for a Max Tonic. */
+#define ITEM_HEAL_FULL 0xFFFF
+uint16_t item_heal_amount(uint8_t item);
+
+/* ---------- RNG (battle randomness only, never used for generation) ---------- */
+void game_rng_seed(uint32_t seed);
+uint32_t game_rand(void);
+uint32_t game_rand_range(uint32_t n); /* 0..n-1 */
+
+/* ---------- Deterministic generation ---------- */
+uint32_t echo_hash_mac(const uint8_t mac[6]);
+void echo_genes(const uint8_t mac[6], EchoGenes* out);
+const char* echo_species_name(const uint8_t mac[6]);
+/* The echoid's own name, generated from its MAC with a Markov chain trained
+ * on words themed after its type. Always the same for the same MAC. */
+#define ECHO_NAME_MIN 4
+#define ECHO_NAME_MAX 9
+#define ECHO_NAME_LEN (ECHO_NAME_MAX + 1)
+void echo_name(const uint8_t mac[6], char* out, size_t size);
+/* Themed source words for a type's names (NULL-terminated list). */
+const char* const* echo_name_corpus(uint8_t type);
+const char* echo_type_name(uint8_t type);
+const char* echo_type_short(uint8_t type);
+const char* echo_rarity_name(uint8_t rarity);
+/* ---------- Star rating of the random stat rolls ---------- */
+/* Base stats are a floor, plus a random roll from the MAC, plus a rarity bonus. */
+#define STAT_HP_FLOOR    24
+#define STAT_HP_ROLL_MAX 16
+#define STAT_FLOOR       8
+#define STAT_ROLL_MAX    8
+
+typedef enum {
+    StatHp,
+    StatAtk,
+    StatDef,
+    StatSpd,
+    STAT_COUNT,
+} StatId;
+
+typedef struct {
+    uint8_t roll[STAT_COUNT]; /* the random part, 0..max */
+    uint8_t max[STAT_COUNT];
+    uint8_t stars[STAT_COUNT]; /* 1-3 each: 3 = the best possible roll */
+    uint8_t total_stars; /* 4..12 */
+    uint8_t overall; /* 1-3: 3 only when every stat is perfect */
+} EchoRating;
+
+uint8_t stat_stars(uint8_t roll, uint8_t max);
+void echo_rating(const uint8_t mac[6], EchoRating* out);
+const char* stat_name(uint8_t stat);
+
+/* One letter for compact lists: C, U, R, E, L. */
+char echo_rarity_letter(uint8_t rarity);
+/* ---------- Moves ---------- */
+#define MAX_MOVES    4 /* moves an echoid can use at once */
+#define MOVE_NEUTRAL ECHO_TYPE_COUNT /* Move.type for untyped moves */
+
+typedef struct {
+    const char* name;
+    uint8_t type; /* EchoType, or MOVE_NEUTRAL (no type matchups) */
+    uint8_t power;
+    uint8_t accuracy; /* percent */
+} Move;
+
+/* The moves an echoid knows at its level: the MAX_MOVES most recently
+ * learned, oldest first (later moves are stronger). Returns the count. */
+uint8_t echo_moves(const Echoid* e, Move out[MAX_MOVES]);
+/* The move learned on reaching exactly this level, or NULL. Level 1 moves
+ * are known from the start and not reported. */
+const Move* echo_move_learned_at(const uint8_t mac[6], uint8_t level);
+/* The next move this echoid will learn, and at which level (NULL if none). */
+const Move* echo_next_move(const Echoid* e, uint8_t* at_level);
+const char* move_type_short(const Move* m);
+
+#define TYPED_MOVES       6 /* moves per type */
+#define SPECIES_PER_TYPE  3
+/* False for opposed elements: the type an echoid beats and the type that beats it. */
+bool move_type_learnable(uint8_t echo_type, uint8_t move_type);
+/* The two move types an echoid of this type can never learn. */
+void echo_unlearnable_types(uint8_t echo_type, uint8_t out[2]);
+/* A move's damage multiplier in percent against a defender of this type
+ * (100 for untyped moves). */
+uint8_t move_mult(const Move* m, uint8_t defender_type);
+/* Each move learned on the way from level `from` (exclusive) to `to`
+ * (inclusive), in order; returns the count (up to max). */
+uint8_t echo_moves_learned(const uint8_t mac[6], uint8_t from, uint8_t to, const Move** out, uint8_t max);
+/* Tables, for docs and tools. */
+const Move* move_get(uint8_t type, uint8_t idx);
+uint8_t learnset_len(void);
+const Move* learnset_move(uint8_t type, uint8_t species, uint8_t i, uint8_t* level);
+const char* species_name_of(uint8_t type, uint8_t species);
+const char* shard_tier_name(uint8_t tier);
+const char* item_name(uint8_t item);
+Shard shard_from_mac(const uint8_t mac[6]);
+/* 16x16 sprite, bit 15 of rows[0] is the top-left pixel. */
+void echo_sprite(const uint8_t mac[6], uint16_t rows[SPRITE_SIZE]);
+
+/* ---------- Creature progression ---------- */
+void echo_init(Echoid* e, const uint8_t mac[6], uint8_t level, const char* origin);
+void echo_stats(const Echoid* e, EchoStats* out);
+uint16_t echo_xp_to_next(uint8_t level);
+/* Adds XP, returns the number of levels gained. */
+uint8_t echo_add_xp(Echoid* e, uint32_t xp);
+/* Wild creatures keep their MAC-derived genes but scale near the player's lead. */
+uint8_t echo_wild_level(const uint8_t mac[6], uint8_t lead_level);
+/* Wild echoids only come out at certain hours: a 24-bit mask (bit h = hour h,
+ * local time) of one or two daily windows. Rarer echoids are out for less
+ * time. Always the same for the same MAC. */
+uint32_t echo_active_hours(const uint8_t mac[6]);
+bool echo_active_at(const uint8_t mac[6], uint8_t hour);
+/* Damage multiplier in percent: 200 strong, 100 neutral, 50 resisted. */
+uint8_t echo_type_mult(uint8_t attacker, uint8_t defender);
+uint8_t echo_capture_chance(const Echoid* wild, uint8_t ball);
+
+/* Rules as numbers, for docs and tools. */
+uint8_t rarity_chance_pct(uint8_t rarity);
+uint8_t shard_tier_chance_pct(uint8_t tier);
+uint8_t capture_base_pct(uint8_t rarity);
+uint8_t ball_mult_x10(uint8_t ball); /* 10 = x1.0 */
+void active_window_len(uint8_t rarity, uint8_t* lo, uint8_t* hi);
+uint32_t battle_xp_reward(uint8_t wild_level, uint8_t rarity, bool captured);
+
+/* ---------- Dungeons ---------- */
+
+/* Jacking in to a WiFi network opens its dungeon: a row of rooms ending in a
+ * boss, the same every time for the same network. */
+#define DUNGEON_ROOMS_MIN 4 /* rooms before the boss */
+#define DUNGEON_ROOMS_MAX 6
+#define DUNGEON_BOSS_LEVELS 3 /* the boss is this many levels above the team */
+#define DUNGEON_REST_PCT 50 /* a rest heals this % of max HP (fainted ones stay down) */
+
+typedef enum {
+    RoomFight,
+    RoomCache, /* shards to pick up */
+    RoomRest, /* the team recovers HP */
+    RoomBoss,
+} RoomKind;
+
+typedef struct {
+    uint8_t type; /* the dungeon's element */
+    uint8_t rooms; /* including the boss room, which is always last */
+    uint8_t kind[DUNGEON_ROOMS_MAX + 1];
+    uint8_t foe[DUNGEON_ROOMS_MAX + 1][6]; /* the echoid in each fight and the boss room */
+} DungeonLayout;
+
+void dungeon_layout(const uint8_t net_mac[6], DungeonLayout* out);
+/* "Wavern Reef": a name made from the network's MAC and the dungeon's element. */
+void dungeon_name(const uint8_t net_mac[6], char* out, size_t size);
+const char* dungeon_place_name(uint8_t type);
+/* The level of a dungeon's echoids for a team at this (average) level. */
+uint8_t dungeon_foe_level(uint8_t team_level, bool boss);
+/* A cache room's shards: how many, of the dungeon's element, and the tier. */
+void dungeon_cache(const uint8_t net_mac[6], uint8_t room, uint8_t* count, uint8_t* tier);
+
+/* ---------- Team ---------- */
+/* Removes team[idx] into *out, keeping order. Refuses the last member. The
+ * lead index follows its echoid; if the lead itself leaves, the first
+ * remaining member becomes lead. */
+bool team_remove(Echoid* team, uint8_t* count, uint8_t* lead, uint8_t idx, Echoid* out);
+
+/* ---------- Legacy roster (save versions 4-5 kept team + PAC in one array) ---------- */
+/* Lists the array indexes of team (party=true) or PAC members, in order. */
+uint8_t roster_list(const Echoid* all, uint8_t count, bool party, uint8_t* out);
+uint8_t roster_party_count(const Echoid* all, uint8_t count);
+/* Repairs flags: lead in the team and at most PARTY_MAX in the team. With
+ * fill, free team slots are filled from the PAC in order (old saves). */
+void roster_normalize(Echoid* all, uint8_t count, uint8_t* lead, bool fill);
+
+/* ---------- Crafting ---------- */
+typedef struct {
+    const char* name;
+    const char* recipe;
+    uint8_t out;
+    uint8_t tier_need[SHARD_TIER_COUNT]; /* shards of a given tier, any element */
+    int8_t elem_a; /* -1 = unused */
+    uint8_t elem_a_n; /* shards of elem_a, any tier */
+    int8_t elem_b;
+    uint8_t elem_b_n;
+    uint8_t any_n; /* shards of any element and tier */
+} Recipe;
+
+/* Recipe.out value for a PAC: it adds storage instead of a bag item. */
+#define CRAFT_OUT_PAC 0xFF
+
+extern const Recipe recipes[];
+extern const size_t recipe_count;
+
+uint32_t inventory_shard_total(const Inventory* inv);
+
+/* ---------- Shard cooldowns ---------- */
+/* Compact duration: "<1m", "42m", "3h05m". */
+void format_duration(uint32_t seconds, char* out, size_t size);
+
+/* Seconds before the same Bluetooth device can drop its shard again. */
+uint32_t shard_cooldown_s(uint8_t tier);
+
+/* Cooldown table: parallel arrays of device hashes and the time (seconds,
+ * RTC) their shard was last collected. Returns true if the shard can be
+ * collected now (and records it). Otherwise returns false and, if
+ * remaining_s is given, stores the seconds left. */
+bool shard_claim(
+    uint32_t* hashes,
+    uint32_t* times,
+    uint16_t* count,
+    uint16_t max,
+    uint32_t hash,
+    uint8_t tier,
+    uint32_t now,
+    uint32_t* remaining_s);
+bool craft_can(const Inventory* inv, size_t recipe);
+bool craft_do(Inventory* inv, size_t recipe);
+
+/* ---------- Battle ---------- */
+typedef enum {
+    BattleOngoing,
+    BattleWon,
+    BattleLost,
+    BattleCaptured,
+    BattleFled,
+} BattleResult;
+
+#define BATTLE_LOG_LINES 2
+#define BATTLE_LOG_LEN   40
+
+typedef struct {
+    Echoid* mine;
+    Echoid wild;
+    uint8_t result;
+    uint8_t level_before; /* active echoid's level before XP was awarded */
+    uint8_t levels_gained; /* ... and how many it gained */
+    uint32_t xp_gained; /* total XP won; shared evenly by everyone who fought */
+
+    /* Every echoid that fought in this battle (fainted ones included). */
+    Echoid* fought[PARTY_MAX];
+    uint8_t fought_n;
+    uint32_t fought_xp[PARTY_MAX];
+    uint8_t fought_level_before[PARTY_MAX];
+    char log[BATTLE_LOG_LINES][BATTLE_LOG_LEN];
+} Battle;
+
+void battle_start(Battle* b, Echoid* mine, const uint8_t mac[6], uint8_t level, const char* ssid);
+/* Player uses the move in slot (0..echo_moves()-1); the wild echoid answers. */
+void battle_attack(Battle* b, uint8_t slot);
+/* Sends in another echoid. A chosen switch costs the turn (the wild echoid
+ * attacks the newcomer); replacing a fainted echoid does not. */
+void battle_switch(Battle* b, Echoid* next, bool costs_turn);
+/* Returns false if the player has no ball of that kind. */
+bool battle_throw(Battle* b, Inventory* inv, uint8_t ball);
+void battle_flee(Battle* b);
