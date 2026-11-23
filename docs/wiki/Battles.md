@@ -20,7 +20,7 @@ See also: [Types](Types.md) · [Types and Moves](Types-and-Moves.md) · [Echoids
 
 - Your **lead** fights first. If it has fainted, the first healthy team member starts instead. If the whole team has fainted, you can't battle.
 - The wild echoid's level is set near your lead's: from 2 below to 2 above, plus 1 for Rare and rarer.
-- You can't battle an echoid you already own, one you've already fought or fled from this visit, or one that has just gone to sleep ([time of day](Echoids.md#time-of-day)).
+- Echoids you catch or beat leave the Collect list for good and never show up again. You can't battle one that has just gone to sleep ([time of day](Echoids.md#time-of-day)).
 
 ## Your turn
 
@@ -79,7 +79,7 @@ A failed throw lets the wild echoid attack. A caught echoid joins your team, or 
 
 ## Running away
 
-Run chance = `50% + 5% × (your SPD − its SPD)`, kept between 20% and 95%. If it fails, the wild echoid attacks. An echoid you fled from can't be battled again this visit.
+Run chance = `50% + 5% × (your SPD − its SPD)`, kept between 20% and 95%. If it fails, the wild echoid attacks. An echoid you ran from stays in the list and can be battled again.
 
 ## XP
 

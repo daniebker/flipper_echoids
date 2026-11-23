@@ -645,8 +645,8 @@ static void gen_battles(void) {
            "healthy team member starts instead. If the whole team has fainted, you can't battle.\n");
     printf("- The wild echoid's level is set near your lead's: from 2 below to 2 above, plus 1 for "
            "Rare and rarer.\n");
-    printf("- You can't battle an echoid you already own, one you've already fought or fled from "
-           "this visit, or one that has just gone to sleep ([time of day](Echoids.md#time-of-day)).\n\n");
+    printf("- Echoids you catch or beat leave the Collect list for good and never show up again. "
+           "You can't battle one that has just gone to sleep ([time of day](Echoids.md#time-of-day)).\n\n");
 
     printf("## Your turn\n\nThe battle menu has four actions:\n\n| Action | What it does |\n|---|---|\n");
     printf("| **Hit** | Pick one of your echoid's moves (up to %d). Each row shows `x2`/`x.5` against "
@@ -693,8 +693,8 @@ static void gen_battles(void) {
            "the PAC when the team is full. If there's no room anywhere, craft a PAC first.\n\n");
 
     printf("## Running away\n\nRun chance = `50%% + 5%% × (your SPD − its SPD)`, kept between 20%% and "
-           "95%%. If it fails, the wild echoid attacks. An echoid you fled from can't be battled "
-           "again this visit.\n\n");
+           "95%%. If it fails, the wild echoid attacks. An echoid you ran from stays in the list "
+           "and can be battled again.\n\n");
 
     printf("## XP\n\nWinning gives `(8 + 5 × wild level) × (1 + 0.25 × rarity step)` XP, and "
            "catching gives 1.5× that:\n\n| Wild level |");

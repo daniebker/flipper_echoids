@@ -168,7 +168,7 @@ final class DetailScreen extends Screen {
                 }));
             } else {
                 box.addView(Ui.text(app, state.equals("owned") ? "You've already caught this echoid." :
-                                                               "You've already fought this one. Find others, or come back another time.",
+                                                               "You've already beaten this one. Find others.",
                     14, Ui.MUTED));
             }
             /* Any network you can connect to has a dungeon. */

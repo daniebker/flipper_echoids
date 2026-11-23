@@ -270,6 +270,14 @@ bool save_load(SaveData* data) {
 
     if(data->version == SAVE_VERSION) {
         ok = read == sizeof(SaveData);
+    } else if(data->version == 7) {
+        /* v7 -> v8: only the (empty) defeated list is new. */
+        ok = read == SAVE_V7_SIZE;
+        if(ok) {
+            memset((uint8_t*)data + SAVE_V7_SIZE, 0, sizeof(SaveData) - SAVE_V7_SIZE);
+            data->version = SAVE_VERSION;
+            upgraded = true;
+        }
     } else if(data->version >= 1 && data->version <= 6) {
         /* Keep a copy of the old file first: if anything goes wrong below,
          * the player's progress is still on the card. */
@@ -315,6 +323,8 @@ bool save_load(SaveData* data) {
     uint32_t stored = pac_file_count();
     if(data->pac_count > stored) data->pac_count = stored;
     if(data->seen_bt_count > SEEN_BT_MAX) data->seen_bt_count = SEEN_BT_MAX;
+    if(data->defeated_count > DEFEATED_MAX) data->defeated_count = DEFEATED_MAX;
+    if(data->defeated_next >= DEFEATED_MAX) data->defeated_next = 0;
     /* Store the converted save right away, so the PAC file isn't rebuilt again. */
     if(upgraded) save_store(data);
     return true;

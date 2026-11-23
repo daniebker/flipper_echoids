@@ -75,6 +75,43 @@ bool session_owns(Session* s, const uint8_t mac[6]) {
     return pac_find(mac, s->save.pac_count) != PAC_NOT_FOUND;
 }
 
+bool session_defeated(const Session* s, const uint8_t mac[6]) {
+    uint32_t h = echo_hash_mac(mac);
+    uint16_t n = s->save.defeated_count < DEFEATED_MAX ? s->save.defeated_count : DEFEATED_MAX;
+    for(uint16_t i = 0; i < n; i++)
+        if(s->save.defeated[i] == h) return true;
+    return false;
+}
+
+/* Remembers a beaten wild echoid for good (the oldest are overwritten when full). */
+static void remember_defeated(Session* s, const uint8_t mac[6]) {
+    SaveData* sv = &s->save;
+    if(session_defeated(s, mac)) return;
+    sv->defeated[sv->defeated_next] = echo_hash_mac(mac);
+    sv->defeated_next = (sv->defeated_next + 1) % DEFEATED_MAX;
+    if(sv->defeated_count < DEFEATED_MAX) sv->defeated_count++;
+}
+
+/* Caught or beaten: it never shows up nearby again. */
+static bool done_with(Session* s, const uint8_t mac[6]) {
+    return session_defeated(s, mac) || session_owns(s, mac);
+}
+
+/* Takes an echoid off the nearby list. */
+static void nearby_remove(Session* s, const uint8_t mac[6]) {
+    for(uint8_t i = 0; i < s->nearby_count; i++) {
+        if(memcmp(s->nearby[i].mac, mac, 6) != 0) continue;
+        memmove(&s->nearby[i], &s->nearby[i + 1], sizeof(Nearby) * (s->nearby_count - i - 1));
+        s->nearby_count--;
+        if(s->battle_nearby > (int8_t)i)
+            s->battle_nearby--;
+        else if(s->battle_nearby == (int8_t)i)
+            s->battle_nearby = -1;
+        if(s->nearby_next_replace >= s->nearby_count) s->nearby_next_replace = 0;
+        return;
+    }
+}
+
 bool session_team_full(const Session* s) {
     return s->save.team_count >= PARTY_MAX;
 }
@@ -203,6 +240,8 @@ static void handle_ap(Session* s, const ScanEvent* ev) {
             return;
         }
     }
+    /* Caught and beaten echoids are gone for good. */
+    if(done_with(s, ev->mac)) return;
     Nearby* n;
     if(s->nearby_count < SESSION_NEARBY_MAX) {
         n = &s->nearby[s->nearby_count++];
@@ -216,11 +255,10 @@ static void handle_ap(Session* s, const ScanEvent* ev) {
     memcpy(n->mac, ev->mac, 6);
     n->rssi = ev->rssi;
     snprintf(n->ssid, sizeof(n->ssid), "%s", ev->name[0] ? ev->name : "<hidden>");
-    n->state = session_owns(s, ev->mac) ? NearbyOwned : NearbyWild;
+    n->state = NearbyWild;
 
     /* Count each echoid once, even if its list slot was recycled. */
-    if(note(s->spotted, &s->spotted_count, SESSION_SPOTTED_MAX, echo_hash_mac(ev->mac)) &&
-       n->state == NearbyWild) {
+    if(note(s->spotted, &s->spotted_count, SESSION_SPOTTED_MAX, echo_hash_mac(ev->mac))) {
         char name[ECHO_NAME_LEN], text[SESSION_MSG_LEN];
         name_of(ev->mac, name);
         snprintf(text, sizeof(text), "A wild %s is out!", name);
@@ -302,9 +340,8 @@ void session_sighting(Session* s, const ScanEvent* ev) {
 void session_scan_start(Session* s) {
     if(s->dungeon.active) return; /* no collecting inside a dungeon */
     /* Catches since the last visit may have been seen here before. */
-    for(uint8_t i = 0; i < s->nearby_count; i++)
-        if(s->nearby[i].state == NearbyWild && session_owns(s, s->nearby[i].mac))
-            s->nearby[i].state = NearbyOwned;
+    for(uint8_t i = s->nearby_count; i-- > 0;)
+        if(done_with(s, s->nearby[i].mac)) nearby_remove(s, s->nearby[i].mac);
     s->scanning = true;
 }
 
@@ -500,11 +537,15 @@ static void after_action(Session* s) {
     }
     case BattleWon:
         s->save.wins++;
+        /* A beaten wild echoid is gone for good (dungeon foes aren't nearby echoids). */
+        if(s->battle_in_dungeon)
+            s->dungeon.room_done = true;
+        else
+            remember_defeated(s, b->wild.mac);
         if(n) n->state = NearbyDone;
-        if(s->battle_in_dungeon) s->dungeon.room_done = true;
         break;
     case BattleFled:
-        if(n) n->state = NearbyDone;
+        /* It got away: it stays in the list and can be battled again. */
         break;
     default:
         break;
@@ -551,7 +592,10 @@ bool session_battle_begin(Session* s, uint8_t index) {
         n->state = NearbyOwned;
         FAIL(s, "Already caught");
     }
-    if(n->state == NearbyDone) FAIL(s, "Already fought - find others");
+    if(n->state == NearbyDone || session_defeated(s, n->mac)) {
+        n->state = NearbyDone;
+        FAIL(s, "Already beaten - find others");
+    }
     if(!echo_active_at(n->mac, s->hour)) FAIL(s, "It went to sleep...");
     /* The lead fights; if it has fainted, the first healthy team member does. */
     Echoid* first = session_lead(s);
@@ -629,6 +673,9 @@ bool session_battle_close(Session* s) {
     if(s->battle.result == BattleOngoing) FAIL(s, "The battle isn't over");
     s->in_battle = false;
     s->must_switch = false;
+    /* Caught or beaten: off the list now that the battle screen is closed. */
+    Nearby* n = battle_nearby(s);
+    if(n && n->state != NearbyWild) nearby_remove(s, n->mac);
     s->battle_nearby = -1;
     if(s->battle_in_dungeon) {
         s->battle_in_dungeon = false;

@@ -392,16 +392,65 @@ int main(void) {
     printf("caught %d, team %ld, wins %ld\n", catches, state("team"), state("wins"));
     CHECK(catches > 0 && state("team") == 1 + catches);
 
-    /* Can't battle an echoid you own */
-    char* list = engine_nearby_json();
-    const char* own = strstr(list, "\"state\":\"owned\"");
-    if(own) {
-        const char* p = own;
-        while(p > list && strncmp(p, "\"index\":", 8) != 0)
-            p--;
-        CHECK(!ok(engine_battle_begin((uint32_t)strtol(p + 8, NULL, 10))));
+    /* Caught echoids leave the list, and don't come back when seen again. */
+    CHECK(!contains(engine_nearby_json(), "\"state\":\"owned\""));
+    for(int i = 0; i < 400; i++)
+        sighting(0, i);
+    engine_tick();
+    CHECK(!contains(engine_nearby_json(), "\"state\":\"owned\""));
+    long nearby_before_flee = state("nearby");
+
+    /* An echoid you ran from stays and can be battled again; one you beat is gone. */
+    char fled_mac[18] = {0};
+    int beat_fled = 0;
+    for(int tries = 0; tries < 20 && !fled_mac[0]; tries++) {
+        heal_team();
+        char* nl = engine_nearby_json();
+        const char* m = strstr(nl, "\"mac\":\"");
+        char mac_hex[18] = {0};
+        if(m) memcpy(mac_hex, m + 7, 17);
+        free(nl);
+        if(!mac_hex[0] || !ok(engine_battle_begin(0))) break;
+        for(int t = 0; t < 30 && contains(engine_battle_json(), "\"result\":\"ongoing\""); t++)
+            free(engine_battle_run());
+        int fled = contains(engine_battle_json(), "\"result\":\"fled\"");
+        free(engine_battle_close());
+        if(fled) memcpy(fled_mac, mac_hex, sizeof(fled_mac));
     }
-    free(list);
+    CHECK(fled_mac[0]);
+    if(fled_mac[0]) {
+        CHECK(contains(engine_nearby_json(), fled_mac));
+        CHECK(!contains(engine_nearby_json(), "\"state\":\"fought\""));
+        CHECK(state("nearby") == nearby_before_flee);
+        /* Find it and fight it to the end. */
+        char* nl = engine_nearby_json();
+        const char* at = strstr(nl, fled_mac);
+        const char* p = at;
+        while(p && p > nl && strncmp(p, "\"index\":", 8) != 0)
+            p--;
+        uint32_t idx = p ? (uint32_t)strtol(p + 8, NULL, 10) : 0;
+        free(nl);
+        long wins_before = state("wins");
+        heal_team();
+        CHECK(ok(engine_battle_begin(idx)));
+        fight();
+        int won = contains(engine_battle_json(), "\"result\":\"won\"");
+        free(engine_battle_close());
+        heal_team();
+        beat_fled = won;
+        if(won) {
+            CHECK(state("wins") == wins_before + 1);
+            CHECK(!contains(engine_nearby_json(), fled_mac));
+            CHECK(state("nearby") == nearby_before_flee - 1);
+            /* Seen again: still gone. */
+            for(int i = 0; i < 400; i++)
+                sighting(0, i);
+            engine_tick();
+            CHECK(!contains(engine_nearby_json(), fled_mac));
+        } else {
+            CHECK(contains(engine_nearby_json(), fled_mac)); /* lost: still out there */
+        }
+    }
 
     /* Dungeons */
     test_dungeon();
@@ -426,6 +475,14 @@ int main(void) {
     engine_unload();
     CHECK(!engine_init(mac, "Phone")); /* loaded, not new */
     CHECK(state("captures") == captures && state("wins") == wins && state("team") == team);
+    /* Beaten echoids stay gone after a reload. */
+    if(fled_mac[0]) {
+        engine_scan_set(true);
+        for(int i = 0; i < 400; i++)
+            sighting(0, i);
+        engine_tick();
+        CHECK(contains(engine_nearby_json(), fled_mac) == !beat_fled);
+    }
 
     /* Reset starts over with just the starter */
     CHECK(ok(engine_reset()));

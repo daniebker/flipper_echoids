@@ -37,8 +37,8 @@
 
 typedef enum {
     NearbyWild,
-    NearbyOwned,
-    NearbyDone, /* defeated or fled this visit */
+    NearbyOwned, /* just caught: leaves the list when the battle closes */
+    NearbyDone, /* just beaten: leaves the list when the battle closes */
 } NearbyState;
 
 typedef struct {
@@ -155,6 +155,9 @@ void session_set_bluetooth(Session* s, bool on);
 /* ---- Queries ---- */
 Echoid* session_lead(Session* s);
 bool session_owns(Session* s, const uint8_t mac[6]);
+/* Beaten in a wild battle (remembered in the save). Caught and beaten echoids
+ * never show up in the nearby list again; ones you ran from stay. */
+bool session_defeated(const Session* s, const uint8_t mac[6]);
 bool session_pac_has_room(const Session* s);
 bool session_team_full(const Session* s);
 /* A nearby echoid as it would battle (at a level near your lead's). */

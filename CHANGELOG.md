@@ -87,6 +87,12 @@ far is listed here.
   publishes both with the docs and SHA256 checksums.
 - Screenshots of the Flipper and Android apps in the README.
 
+### Changed
+- Echoids you catch or beat leave the Collect list for good: they never show
+  up nearby again, even on later visits (beaten ones are kept in the save,
+  which moves to version 8). An echoid you run from stays in the list and can
+  be battled again.
+
 ### Fixed
 - Android 15: pages are no longer hidden under the title bar, and the tab bar
   no longer sits under the gesture bar.

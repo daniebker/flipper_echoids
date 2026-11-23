@@ -4,8 +4,9 @@
 #include "scanner.h"
 
 #define SAVE_MAGIC   0x45434831u /* "ECH1" */
-#define SAVE_VERSION 7 /* v7: 16 item slots (v6: PAC echoids in pac.bin) */
+#define SAVE_VERSION 8 /* v8: defeated echoids (v7: 16 item slots, v6: PAC echoids in pac.bin) */
 #define SEEN_BT_MAX  256
+#define DEFEATED_MAX 512 /* wild echoids beaten in battle; the oldest are forgotten */
 
 typedef struct {
     uint32_t magic;
@@ -44,7 +45,16 @@ typedef struct {
     uint16_t dungeons_cleared; /* was reserved (zero in older saves) */
 
     Echoid team[PARTY_MAX];
+
+    /* v8: MAC hashes of wild echoids beaten in battle (a ring: the oldest are
+     * overwritten when it's full). They never show up nearby again. */
+    uint32_t defeated[DEFEATED_MAX];
+    uint16_t defeated_count; /* entries in use, up to DEFEATED_MAX */
+    uint16_t defeated_next; /* where the next one goes */
 } SaveData;
+
+/* A v7 save is the v8 layout without the defeated list. */
+#define SAVE_V7_SIZE (offsetof(SaveData, defeated))
 
 /* How many echoids the PAC storage can hold. */
 static inline uint32_t save_pac_capacity(const SaveData* sv) {
