@@ -113,17 +113,28 @@ static void deadline(struct timespec* ts, uint32_t timeout) {
 }
 
 FuriStatus furi_message_queue_put(FuriMessageQueue* q, const void* msg, uint32_t timeout) {
-    UNUSED(timeout);
     pthread_mutex_lock(&q->m);
+    /* Like the Flipper: wait for room, up to the timeout. */
+    if(q->used == q->count && timeout > 0) {
+        if(timeout == FuriWaitForever) {
+            while(q->used == q->count)
+                pthread_cond_wait(&q->cond, &q->m);
+        } else {
+            struct timespec ts;
+            deadline(&ts, timeout);
+            while(q->used == q->count) {
+                if(pthread_cond_timedwait(&q->cond, &q->m, &ts) == ETIMEDOUT) break;
+            }
+        }
+    }
     if(q->used == q->count) {
-        /* Full: drop the message rather than block a UI thread. */
         pthread_mutex_unlock(&q->m);
         return FuriStatusErrorTimeout;
     }
     uint32_t slot = (q->head + q->used) % q->count;
     memcpy(q->buf + (size_t)slot * q->size, msg, q->size);
     q->used++;
-    pthread_cond_signal(&q->cond);
+    pthread_cond_broadcast(&q->cond);
     pthread_mutex_unlock(&q->m);
     return FuriStatusOk;
 }
@@ -149,6 +160,7 @@ FuriStatus furi_message_queue_get(FuriMessageQueue* q, void* msg, uint32_t timeo
     memcpy(msg, q->buf + (size_t)q->head * q->size, q->size);
     q->head = (q->head + 1) % q->count;
     q->used--;
+    pthread_cond_broadcast(&q->cond); /* wake anyone waiting for room */
     pthread_mutex_unlock(&q->m);
     return FuriStatusOk;
 }

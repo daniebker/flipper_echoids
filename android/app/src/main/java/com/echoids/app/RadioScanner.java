@@ -101,11 +101,11 @@ final class RadioScanner {
         String e = error == null ? "" : error;
         if(!e.equals(lastError)) {
             lastError = e;
-            NativeBridge.setScanError(error);
+            Engine.setRadioError(error);
         }
     }
 
-    /** Called about once a second with what the game wants (see NativeBridge.scanWanted). */
+    /** Called about once a second with what the game wants (see Engine.radiosWanted). */
     void tick(int wanted) {
         if(wanted == 0) {
             stop();
@@ -188,7 +188,7 @@ final class RadioScanner {
             String ssid = r.SSID;
             if(ssid != null && ssid.startsWith("\"") && ssid.endsWith("\"") && ssid.length() >= 2)
                 ssid = ssid.substring(1, ssid.length() - 1);
-            NativeBridge.pushScan(NativeBridge.SCAN_WIFI, mac, r.level, ssid == null ? "" : ssid);
+            Engine.pushSighting(Engine.SIGHTING_WIFI, mac, r.level, ssid == null ? "" : ssid);
         }
     }
 
@@ -235,7 +235,7 @@ final class RadioScanner {
         } catch(SecurityException ignored) {
         }
         if(name == null && result.getScanRecord() != null) name = result.getScanRecord().getDeviceName();
-        NativeBridge.pushScan(NativeBridge.SCAN_BLUETOOTH, mac, result.getRssi(), name == null ? "" : name);
+        Engine.pushSighting(Engine.SIGHTING_BLUETOOTH, mac, result.getRssi(), name == null ? "" : name);
     }
 
     /** "aa:bb:cc:dd:ee:ff" -> 6 bytes (null if malformed or the all-zero "unknown" MAC). */

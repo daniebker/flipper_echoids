@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Generates android/app/src/main/cpp/shim/font5x7.h: a small proportional pixel
+"""Generates android/tests/flipper_ui/font5x7.h: a small proportional pixel
 font (5 px wide, 7 px tall plus a 1 px descender) used to draw the Flipper's text.
 
 Each glyph is 8 rows: rows 0-6 sit on the baseline (row 6), row 7 is the descender.
-Run:  python3 android/tools/make_font.py > android/app/src/main/cpp/shim/font5x7.h
+Run:  python3 android/tests/flipper_ui/make_font.py > android/tests/flipper_ui/font5x7.h
 """
 
 G = {}

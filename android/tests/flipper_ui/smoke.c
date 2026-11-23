@@ -54,6 +54,16 @@ static void check_screen(const char* name) {
     shots++;
 }
 
+/* The battle's bottom bar (rows 56-63) is solid black once it's over. */
+static int battle_over(void) {
+    usleep(150000);
+    shim_render(fb);
+    int black = 0;
+    for(int x = 0; x < 128; x++)
+        black += fb[60][x];
+    return black > 110;
+}
+
 static void press(InputKey k) {
     shim_input(k, InputTypeShort);
     usleep(120000);
@@ -97,9 +107,15 @@ int main(void) {
     press(InputKeyOk);
     check_screen("after_hit");
     press(InputKeyLeft); /* Run */
-    press(InputKeyOk);
-    press(InputKeyOk);
-    press(InputKeyOk);
+    /* Running away can fail (that's the game), so keep trying until the
+     * battle ends: then the bottom bar is one solid "OK: continue" bar. */
+    for(int tries = 0; tries < 30 && !battle_over(); tries++)
+        press(InputKeyOk);
+    if(!battle_over()) {
+        printf("FAIL: couldn't leave the battle\n");
+        failures++;
+    }
+    press(InputKeyOk); /* continue */
     press(InputKeyBack);
     check_screen("menu_again");
     press(InputKeyDown);

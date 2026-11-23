@@ -843,14 +843,20 @@ bool shard_claim(
         return true;
     }
 
-    /* New device: use a free slot, else the entry collected longest ago. */
+    /* New device: use a free slot, else the entry collected longest ago. Many
+     * devices are often collected in the same second, so ties are broken from
+     * a position that depends on the new device: otherwise every new device
+     * would fight over the same slot. */
     uint16_t slot;
     if(*count < max) {
         slot = (*count)++;
     } else {
-        slot = 0;
-        for(uint16_t i = 1; i < max; i++)
+        uint16_t start = (uint16_t)(hash % max);
+        slot = start;
+        for(uint16_t k = 1; k < max; k++) {
+            uint16_t i = (uint16_t)((start + k) % max);
             if(times[i] < times[slot]) slot = i;
+        }
     }
     hashes[slot] = hash;
     times[slot] = now;

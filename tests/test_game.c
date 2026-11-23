@@ -182,6 +182,25 @@ static void test_shard_cooldown(void) {
         found_bb += hashes[i] == 0xBB;
     }
     CHECK(found_ee == 1 && found_bb == 0); /* 0xBB (time t-10) was the oldest */
+
+    /* Many devices in the same second: replacements spread over the table
+     * instead of all landing in one slot. */
+    uint32_t h2[64] = {0}, t2[64] = {0};
+    uint16_t c2 = 0;
+    for(uint32_t i = 0; i < 64; i++)
+        shard_claim(h2, t2, &c2, 64, 1000 + i, ShardDull, 5000, NULL);
+    for(uint32_t i = 0; i < 32; i++)
+        shard_claim(h2, t2, &c2, 64, 9000 + i * 7919, ShardDull, 5000, NULL);
+    int replaced = 0, remembered_new = 0;
+    for(int i = 0; i < 64; i++) {
+        if(h2[i] < 1000 || h2[i] >= 1064) replaced++;
+    }
+    for(uint32_t i = 0; i < 32; i++) {
+        uint32_t left = 0;
+        if(!shard_claim(h2, t2, &c2, 64, 9000 + i * 7919, ShardDull, 5001, &left)) remembered_new++;
+    }
+    CHECK(replaced > 16); /* not just one churning slot */
+    CHECK(remembered_new > 16); /* most new devices are still recharging */
 }
 
 static void test_format_duration(void) {

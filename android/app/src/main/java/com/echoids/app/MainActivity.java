@@ -2,10 +2,10 @@ package com.echoids.app;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -14,89 +14,292 @@ import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.provider.Settings;
 import android.view.Gravity;
-import android.view.KeyEvent;
-import android.view.MotionEvent;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.ArrayDeque;
+import java.util.Deque;
 
 /**
- * Echoids for Android: the Flipper Zero game's own code, shown on a scaled-up
- * 128x64 screen with a Flipper-style D-pad, using the phone's WiFi and
- * Bluetooth radios to find echoids and shards.
+ * Echoids for Android: a native UI on top of the game engine, which uses the
+ * same rules as the Flipper Zero app. WiFi access points are wild echoids and
+ * Bluetooth devices drop shards, found with the phone's own radios.
  */
 public final class MainActivity extends Activity {
-    private static final long FRAME_MS = 33; /* ~30 fps */
-    private static final long LONG_PRESS_MS = 400, REPEAT_MS = 120;
+    private static final long TICK_MS = 250;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private final byte[] pixels = new byte[ScreenView.W * ScreenView.H];
-    private ScreenView screen;
+    private final Deque<Screen> stack = new ArrayDeque<>();
+    private FrameLayout content;
+    private LinearLayout tabBar;
+    private final TextView[] tabs = new TextView[5];
+    private Screen[] tabScreens;
+    private int currentTab;
     private RadioScanner radios;
     private Vibrator vibrator;
     private boolean visible;
-    private long lastRadioTick;
+    private long lastSecond;
 
-    private final Runnable frame = new Runnable() {
+    private final Runnable tick = new Runnable() {
         @Override
         public void run() {
-            if(!NativeBridge.isRunning()) {
-                finish(); /* the player quit from the game's main menu */
-                return;
-            }
-            NativeBridge.render(pixels);
-            screen.setPixels(pixels);
-            int buzz = NativeBridge.takeVibration();
-            if(buzz > 0) vibrate(buzz);
+            Engine.tick();
+            showEvents();
             long now = System.currentTimeMillis();
-            if(now - lastRadioTick > 1000) {
-                lastRadioTick = now;
-                radios.tick(NativeBridge.scanWanted());
+            if(now - lastSecond >= 1000) {
+                lastSecond = now;
+                radios.tick(Engine.radiosWanted());
+                Screen s = current();
+                if(s.autoRefresh()) refresh();
             }
-            if(visible) handler.postDelayed(this, FRAME_MS);
+            if(visible) handler.postDelayed(this, TICK_MS);
         }
     };
 
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         vibrator = (Vibrator)getSystemService(Context.VIBRATOR_SERVICE);
         radios = new RadioScanner(this);
+        getWindow().setStatusBarColor(Ui.BG);
+        getWindow().setNavigationBarColor(Ui.CARD);
+        if(getActionBar() != null) {
+            getActionBar().setElevation(0);
+            getActionBar().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Ui.BG));
+        }
 
-        screen = new ScreenView(this);
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.rgb(20, 20, 20));
-        root.addView(screen, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT));
-        root.addView(buildControls(), new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+        boolean fresh = Engine.init(getFilesDir().getAbsolutePath(), deviceId(), Build.MODEL == null ? "Phone" : Build.MODEL);
+
+        tabScreens = new Screen[] {
+            new CollectScreen(this), new TeamScreen(this), new PacScreen(this), new CraftScreen(this), new BagScreen(this),
+        };
+        LinearLayout root = Ui.column(this);
+        root.setBackgroundColor(Ui.BG);
+        content = new FrameLayout(this);
+        root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        root.addView(buildTabBar());
         setContentView(root);
+        selectTab(0);
 
-        NativeBridge.start(getFilesDir().getAbsolutePath(), deviceId(), Build.MODEL == null ? "Phone" : Build.MODEL);
         requestPermissions(RadioScanner.neededPermissions(), 1);
+        if(fresh) showWelcome();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
         visible = true;
-        handler.removeCallbacks(frame);
-        handler.post(frame);
+        handler.removeCallbacks(tick);
+        handler.post(tick);
+        refresh();
     }
 
     @Override
     protected void onPause() {
         super.onPause();
         visible = false;
-        handler.removeCallbacks(frame);
+        handler.removeCallbacks(tick);
         radios.stop();
-        NativeBridge.requestSave(); /* the game saves on its next tick */
+        Engine.save();
+    }
+
+    /* ---- Navigation ---- */
+
+    Screen current() {
+        return stack.isEmpty() ? tabScreens[currentTab] : stack.peek();
+    }
+
+    void selectTab(int index) {
+        stack.clear();
+        currentTab = index;
+        for(int i = 0; i < tabs.length; i++) {
+            tabs[i].setTextColor(i == index ? Ui.ACCENT : Ui.MUTED);
+        }
+        tabBar.setVisibility(View.VISIBLE);
+        refresh();
+    }
+
+    void push(Screen s) {
+        stack.push(s);
+        tabBar.setVisibility(View.GONE);
+        refresh();
+    }
+
+    void pop() {
+        if(!stack.isEmpty()) stack.pop();
+        tabBar.setVisibility(stack.isEmpty() ? View.VISIBLE : View.GONE);
+        refresh();
+    }
+
+    /** Rebuilds the current screen, keeping the scroll position. */
+    void refresh() {
+        Screen s = current();
+        int scrollY = 0;
+        View old = content.getChildCount() > 0 ? content.getChildAt(0) : null;
+        if(old instanceof ScrollView && old.getTag() == s) scrollY = old.getScrollY();
+        View v = s.build();
+        v.setTag(s);
+        content.removeAllViews();
+        content.addView(v, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        if(v instanceof ScrollView && scrollY > 0) {
+            final int y = scrollY;
+            v.post(() -> v.scrollTo(0, y));
+        }
+        setTitle(s.title());
+        if(getActionBar() != null) getActionBar().setDisplayHomeAsUpEnabled(!stack.isEmpty());
+        /* Keep the screen on while scanning or battling. */
+        JSONObject st = Ui.obj(Engine.state());
+        if(st.optBoolean("scanning") || st.optBoolean("inBattle"))
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        else
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    public void onBackPressed() {
+        if(current().onBack()) return;
+        if(!stack.isEmpty()) {
+            pop();
+        } else if(currentTab != 0) {
+            selectTab(0);
+        } else {
+            super.onBackPressed();
+        }
+    }
+
+    private View buildTabBar() {
+        tabBar = Ui.row(this);
+        tabBar.setBackgroundColor(Ui.CARD);
+        String[][] items = {{"📡", "Collect"}, {"🛡", "Team"}, {"📦", "PAC"}, {"⚒", "Craft"}, {"🎒", "Bag"}};
+        for(int i = 0; i < items.length; i++) {
+            final int index = i;
+            TextView t = new TextView(this);
+            t.setText(items[i][0] + "\n" + items[i][1]);
+            t.setGravity(Gravity.CENTER);
+            t.setTextSize(12);
+            t.setTypeface(Typeface.DEFAULT_BOLD);
+            t.setPadding(0, Ui.dp(this, 8), 0, Ui.dp(this, 8));
+            t.setOnClickListener(v -> selectTab(index));
+            tabs[i] = t;
+            tabBar.addView(t, Ui.weight(1));
+        }
+        return tabBar;
+    }
+
+    /* ---- Menu: settings and help ---- */
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        menu.add(0, 1, 0, "Settings");
+        menu.add(0, 2, 1, "How to play");
+        return true;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        switch(item.getItemId()) {
+        case android.R.id.home:
+            onBackPressed();
+            return true;
+        case 1:
+            if(!(current() instanceof SettingsScreen) && !(current() instanceof BattleScreen)) push(new SettingsScreen(this));
+            return true;
+        case 2:
+            showHelp();
+            return true;
+        default:
+            return super.onOptionsItemSelected(item);
+        }
+    }
+
+    void showHelp() {
+        new AlertDialog.Builder(this)
+            .setTitle("How to play")
+            .setMessage(
+                "• Collect: start scanning. WiFi access points nearby are wild echoids. Each access point's " +
+                "MAC address decides its species, type, stats and name.\n\n" +
+                "• Echoids only come out at certain hours. Come back at another time of day to meet others.\n\n" +
+                "• Bluetooth devices drop shards. Each device recharges before it drops another.\n\n" +
+                "• Craft Echo Balls from shards, weaken a wild echoid in battle, then throw a ball to catch it.\n\n" +
+                "• Every move has a type. Each type beats the next: Tide → Ember → Flora → Stone → Spark → " +
+                "Gale → Pulse → Void → Tide.\n\n" +
+                "• Your team holds 6. Others go to the PAC; craft more PACs for more room.\n\n" +
+                "• Stars rate an echoid's random stats: 3 stars on every stat is perfect.")
+            .setPositiveButton("Got it", null)
+            .show();
+    }
+
+    private void showWelcome() {
+        JSONArray team = Ui.arr(Engine.team());
+        JSONObject starter = team.optJSONObject(0);
+        if(starter == null) return;
+        LinearLayout box = Ui.column(this);
+        box.setGravity(Gravity.CENTER_HORIZONTAL);
+        int p = Ui.dp(this, 20);
+        box.setPadding(p, p, p, 0);
+        box.addView(Ui.sprite(this, starter, 112));
+        TextView name = Ui.title(this, starter.optString("name"));
+        name.setGravity(Gravity.CENTER);
+        name.setPadding(0, Ui.dp(this, 10), 0, 0);
+        box.addView(name);
+        box.addView(Ui.text(this, starter.optString("species") + " · " + starter.optString("typeName") + " · " +
+                                      starter.optString("rarityName"), 14, Ui.MUTED));
+        TextView t = Ui.text(this, "Your phone's echo has awakened! Every echoid is born from a MAC address; this one " +
+                                       "came from yours.", 14, Ui.TEXT);
+        t.setPadding(0, Ui.dp(this, 12), 0, 0);
+        box.addView(t);
+        new AlertDialog.Builder(this).setView(box).setPositiveButton("Let's go", null).show();
+    }
+
+    /* ---- Feedback ---- */
+
+    void toast(String msg) {
+        if(msg == null || msg.isEmpty()) return;
+        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
+    }
+
+    /** Shows an action's message and refreshes. Returns whether it succeeded. */
+    boolean act(String resultJson) {
+        JSONObject r = Ui.obj(resultJson);
+        toast(r.optString("msg"));
+        refresh();
+        return r.optBoolean("ok");
+    }
+
+    private void showEvents() {
+        JSONArray events = Ui.arr(Engine.takeEvents());
+        for(int i = 0; i < events.length(); i++) {
+            JSONObject e = events.optJSONObject(i);
+            if(e == null) continue;
+            String kind = e.optString("kind");
+            toast(e.optString("text"));
+            if(kind.equals("shard_rare"))
+                vibrate(120);
+            else if(kind.startsWith("shard") || kind.equals("spotted"))
+                vibrate(30);
+        }
+    }
+
+    void vibrate(int ms) {
+        if(vibrator == null || !vibrator.hasVibrator()) return;
+        if(Build.VERSION.SDK_INT >= 26)
+            vibrator.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE));
+        else
+            vibrator.vibrate(ms);
     }
 
     /** A stable 6-byte ID for this device, used to create the starter echoid. */
@@ -114,161 +317,17 @@ public final class MainActivity extends Activity {
         return mac;
     }
 
-    private void vibrate(int ms) {
-        if(vibrator == null || !vibrator.hasVibrator()) return;
-        if(Build.VERSION.SDK_INT >= 26)
-            vibrator.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE));
-        else
-            vibrator.vibrate(ms);
+    /** A scrolling page with a column for cards. */
+    ScrollView page(LinearLayout column) {
+        ScrollView sv = new ScrollView(this);
+        sv.setFillViewport(true);
+        sv.setBackgroundColor(Ui.BG);
+        column.setPadding(0, Ui.dp(this, 6), 0, Ui.dp(this, 16));
+        sv.addView(column);
+        return sv;
     }
 
-    /* ---- Controls: D-pad with OK in the middle, Back on the right ---- */
-
-    private View buildControls() {
-        int unit = (int)(getResources().getDisplayMetrics().density * 64);
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER);
-
-        LinearLayout pad = new LinearLayout(this);
-        pad.setOrientation(LinearLayout.VERTICAL);
-        pad.setGravity(Gravity.CENTER);
-        pad.addView(padRow(unit, null, button("▲", NativeBridge.KEY_UP, unit), null));
-        pad.addView(padRow(unit, button("◀", NativeBridge.KEY_LEFT, unit), button("OK", NativeBridge.KEY_OK, unit),
-            button("▶", NativeBridge.KEY_RIGHT, unit)));
-        pad.addView(padRow(unit, null, button("▼", NativeBridge.KEY_DOWN, unit), null));
-        row.addView(pad);
-
-        FrameLayout gap = new FrameLayout(this);
-        row.addView(gap, new LinearLayout.LayoutParams(unit / 2, 1));
-        View back = button("↩", NativeBridge.KEY_BACK, unit);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(unit, unit);
-        lp.topMargin = unit;
-        row.addView(back, lp);
-        return row;
-    }
-
-    private View padRow(int unit, View a, View b, View c) {
-        LinearLayout r = new LinearLayout(this);
-        r.setOrientation(LinearLayout.HORIZONTAL);
-        View[] cells = {a, b, c};
-        for(View v : cells) {
-            View cell = v != null ? v : new View(this);
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(unit, unit);
-            lp.setMargins(4, 4, 4, 4);
-            r.addView(cell, lp);
-        }
-        return r;
-    }
-
-    /** A button that sends Flipper-style events: Press, then Short on a quick tap,
-     *  or Long followed by Repeat while held, then Release. */
-    @SuppressLint("ClickableViewAccessibility")
-    private View button(String label, int key, int unit) {
-        TextView b = new TextView(this);
-        b.setText(label);
-        b.setGravity(Gravity.CENTER);
-        b.setTextColor(Color.rgb(255, 130, 0));
-        b.setTypeface(Typeface.DEFAULT_BOLD);
-        b.setTextSize(key == NativeBridge.KEY_OK ? 18 : 22);
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(Color.rgb(45, 45, 45));
-        bg.setCornerRadius(unit / 2f);
-        bg.setStroke(3, Color.rgb(255, 130, 0));
-        b.setBackground(bg);
-
-        final boolean[] longFired = {false};
-        final Runnable repeat = new Runnable() {
-            @Override
-            public void run() {
-                NativeBridge.input(key, NativeBridge.TYPE_REPEAT);
-                handler.postDelayed(this, REPEAT_MS);
-            }
-        };
-        final Runnable longPress = () -> {
-            longFired[0] = true;
-            NativeBridge.input(key, NativeBridge.TYPE_LONG);
-            handler.postDelayed(repeat, REPEAT_MS);
-        };
-        b.setOnTouchListener((v, ev) -> {
-            switch(ev.getActionMasked()) {
-            case MotionEvent.ACTION_DOWN:
-                longFired[0] = false;
-                v.setPressed(true);
-                bg.setColor(Color.rgb(90, 50, 0));
-                NativeBridge.input(key, NativeBridge.TYPE_PRESS);
-                handler.postDelayed(longPress, LONG_PRESS_MS);
-                return true;
-            case MotionEvent.ACTION_UP:
-            case MotionEvent.ACTION_CANCEL:
-                v.setPressed(false);
-                bg.setColor(Color.rgb(45, 45, 45));
-                handler.removeCallbacks(longPress);
-                handler.removeCallbacks(repeat);
-                if(!longFired[0] && ev.getActionMasked() == MotionEvent.ACTION_UP)
-                    NativeBridge.input(key, NativeBridge.TYPE_SHORT);
-                NativeBridge.input(key, NativeBridge.TYPE_RELEASE);
-                return true;
-            default:
-                return true;
-            }
-        });
-        return b;
-    }
-
-    /* ---- Hardware keys (D-pad, keyboards, the system Back button) ---- */
-
-    private static int mapKey(int keyCode) {
-        switch(keyCode) {
-        case KeyEvent.KEYCODE_DPAD_UP:
-        case KeyEvent.KEYCODE_W:
-            return NativeBridge.KEY_UP;
-        case KeyEvent.KEYCODE_DPAD_DOWN:
-        case KeyEvent.KEYCODE_S:
-            return NativeBridge.KEY_DOWN;
-        case KeyEvent.KEYCODE_DPAD_LEFT:
-        case KeyEvent.KEYCODE_A:
-            return NativeBridge.KEY_LEFT;
-        case KeyEvent.KEYCODE_DPAD_RIGHT:
-        case KeyEvent.KEYCODE_D:
-            return NativeBridge.KEY_RIGHT;
-        case KeyEvent.KEYCODE_DPAD_CENTER:
-        case KeyEvent.KEYCODE_ENTER:
-        case KeyEvent.KEYCODE_SPACE:
-            return NativeBridge.KEY_OK;
-        case KeyEvent.KEYCODE_BACK:
-        case KeyEvent.KEYCODE_ESCAPE:
-        case KeyEvent.KEYCODE_DEL:
-            return NativeBridge.KEY_BACK;
-        default:
-            return -1;
-        }
-    }
-
-    @Override
-    public boolean onKeyDown(int keyCode, KeyEvent event) {
-        int key = mapKey(keyCode);
-        if(key < 0) return super.onKeyDown(keyCode, event);
-        if(event.getRepeatCount() == 0)
-            NativeBridge.input(key, NativeBridge.TYPE_PRESS);
-        else
-            NativeBridge.input(key, NativeBridge.TYPE_REPEAT);
-        return true;
-    }
-
-    @Override
-    public boolean onKeyUp(int keyCode, KeyEvent event) {
-        int key = mapKey(keyCode);
-        if(key < 0) return super.onKeyUp(keyCode, event);
-        NativeBridge.input(key, NativeBridge.TYPE_SHORT);
-        NativeBridge.input(key, NativeBridge.TYPE_RELEASE);
-        return true;
-    }
-
-    @Override
-    @SuppressWarnings("deprecation")
-    public void onBackPressed() {
-        /* Gesture/system Back = the Flipper's Back button (quit from the main menu). */
-        NativeBridge.input(NativeBridge.KEY_BACK, NativeBridge.TYPE_SHORT);
+    static int textColorOn(int bg) {
+        return Color.luminance(bg) > 0.5f ? Color.BLACK : Color.WHITE;
     }
 }

@@ -20,30 +20,41 @@ nearby WiFi access points and craft gear from shards that Bluetooth devices drop
 
 ## Android
 
-Echoids also runs on **Android phones**, with all the same features. The app runs the
-game's own code, so everything works exactly as on the Flipper: battles, moves, catching,
-crafting, the PAC, time of day, star ratings, names and the rest. It shows the Flipper's
-128×64 screen scaled up in Flipper orange, with a D-pad, OK and Back buttons underneath.
+Echoids also runs on **Android phones**, with all the same features. The app is a proper
+Android app with touch controls, but the game rules come from the same C code as the Flipper
+app. Battles, moves, catching, crafting, the PAC, time of day, star ratings and names all
+work exactly the same way.
 
+- **Five tabs:**
+  - **Collect** starts and stops scanning and lists the echoids out right now, with signal
+    strength.
+  - **Team** shows your six echoids with HP bars.
+  - **PAC** lists everything in Cold PAC Storage, however many you have.
+  - **Craft** shows every recipe and whether you have the shards.
+  - **Bag** shows your items, plus a table of shards by element and tier.
+- **Echoid details:** tap any echoid to see its sprite, rarity, star rating and each stat's
+  roll, plus its moves, the next move it learns, the moves its type can't learn, and its
+  active hours. From the same screen you can make it your lead, use an item on it, or move
+  it between your team and the PAC. A wild one has a **Battle!** button instead.
+- **Battles:** your echoid and the wild one face each other with HP bars. You pick from up
+  to four move buttons, each coloured by type and marked as strong or weak against the foe.
+  Switch, throw a ball (each ball shows its catch chance) or run.
 - **No extra hardware:** the phone's own WiFi and Bluetooth radios find echoids and shards,
   so you don't need an ESP32 board. The same access point gives the same echoid as on a
   Flipper.
 - **Permissions:** the first time, allow **Location** and **Nearby devices**. Android only
   reveals nearby WiFi and Bluetooth devices to apps with these. Location, WiFi and Bluetooth
   must be switched on. If one is missing, Collect says which.
-- **Scan setup:** under **Settings → Scan setup** you choose **Phone radios** or **Demo**,
-  and whether to scan Bluetooth. The Flipper's UART, 5V and terminal options don't apply.
-- **Controls:** tap a button for a press. Hold it to repeat, like the Flipper's long press.
-  The phone's Back gesture or button is the Flipper's Back button, and Back on the main menu
-  closes the app.
+- **Settings** (⋮ menu): switch to **Demo mode** (simulated echoids and shards), turn
+  Bluetooth shards on or off, see your stats, or reset the game.
 - **Android limits:** Android allows only a few WiFi scans every couple of minutes, so new
   access points can take up to about 30 seconds to appear. Many phones and headphones
   change their Bluetooth MAC address now and then, and each new address counts as a new
   device.
 - **Your starter:** your first echoid is created from a stable ID for your phone, because
   Android doesn't let apps read the Bluetooth MAC.
-- **Saving:** progress is saved in the app's own storage, separately from any Flipper, and
-  also when you switch away from the app.
+- **Saving:** progress is saved in the app's own storage, separately from any Flipper. It's
+  saved every 20 seconds and whenever you switch away from the app.
 
 ### Getting the APK
 
@@ -428,9 +439,10 @@ src/scanner_parse.c    Marauder / CSV line parser (no SDK)
 src/save.[ch]          Save file (team, items, settings) and upgrades from old versions
 src/pac_store.[ch]     PAC storage file on the SD card (unlimited stored echoids)
 tests/test_game.c      Host-side unit tests
-android/               Android app: Java UI and radios (app/src/main/java), the JNI bridge
-                       and a small Flipper SDK shim (app/src/main/cpp) around the same src/
-android/tests/smoke.c  Runs the game on the shim on a PC and checks every main screen
+android/               Android app: native Java UI and radios (app/src/main/java), and a
+                       game engine plus JNI bridge (app/src/main/cpp) around the same src/
+android/tests/         PC tests: the Android engine (engine_test.c), and the Flipper UI
+                       run on an SDK shim (flipper_ui/), checking every main screen
 tools/gen_wiki.c       Generates the wiki pages from the game tables
 docs/wiki/             Wiki: Home, Echoids, Types, Types and Moves, Battles, Items and Crafting
 ```
