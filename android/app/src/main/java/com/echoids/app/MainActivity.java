@@ -47,7 +47,7 @@ public final class MainActivity extends Activity {
     private final Deque<Screen> stack = new ArrayDeque<>();
     private FrameLayout content;
     private LinearLayout tabBar;
-    private final TextView[] tabs = new TextView[5];
+    private final TextView[] tabs = new TextView[6];
     private Screen[] tabScreens;
     private Screen dungeonScreen;
     private int currentTab;
@@ -76,10 +76,11 @@ public final class MainActivity extends Activity {
             if(now - lastSecond >= 1000) {
                 lastSecond = now;
                 radios.tick(Engine.radiosWanted());
-                /* Out of the dungeon: the game no longer needs the network. */
-                if(link.active() && !Ui.obj(Engine.state()).optBoolean("wantsLink")) link.release();
+                /* Which WiFi network the phone is on: the Jack in tab, and
+                 * leaving the network throws you out of its dungeon. */
+                boolean linkChanged = link.poll();
                 Screen s = current();
-                if(s.autoRefresh() && !userScrolling()) refresh();
+                if(linkChanged || (s.autoRefresh() && !userScrolling())) refresh();
             }
             if(visible) handler.postDelayed(this, TICK_MS);
         }
@@ -103,6 +104,7 @@ public final class MainActivity extends Activity {
 
         tabScreens = new Screen[] {
             new CollectScreen(this), new TeamScreen(this), new PacScreen(this), new CraftScreen(this), new BagScreen(this),
+            new JackInScreen(this),
         };
         dungeonScreen = new DungeonScreen(this);
         LinearLayout root = Ui.column(this);
@@ -123,13 +125,13 @@ public final class MainActivity extends Activity {
         visible = true;
         handler.removeCallbacks(tick);
         handler.post(tick);
+        link.poll();
         refresh();
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        link.release();
     }
 
     @Override
@@ -159,6 +161,13 @@ public final class MainActivity extends Activity {
             stack.clear();
             currentTab = 0;
         }
+        /* The Jack in tab is there while the phone is on WiFi. */
+        boolean jackIn = !inDungeon && link.onWifi();
+        if(currentTab == 5 && !jackIn) {
+            stack.clear();
+            currentTab = 0;
+        }
+        tabs[5].setVisibility(jackIn ? View.VISIBLE : View.GONE);
         if(inDungeon && (currentTab == 2 || currentTab == 3)) currentTab = 0;
         tabs[0].setText(inDungeon ? "🏰\nDungeon" : "📡\nCollect");
         tabs[2].setVisibility(inDungeon ? View.GONE : View.VISIBLE);
@@ -244,7 +253,7 @@ public final class MainActivity extends Activity {
     private View buildTabBar() {
         tabBar = Ui.row(this);
         tabBar.setBackgroundColor(Ui.CARD);
-        String[][] items = {{"📡", "Collect"}, {"🛡", "Team"}, {"📦", "PAC"}, {"⚒", "Craft"}, {"🎒", "Bag"}};
+        String[][] items = {{"📡", "Collect"}, {"🛡", "Team"}, {"📦", "PAC"}, {"⚒", "Craft"}, {"🎒", "Bag"}, {"🔌", "Jack in"}};
         for(int i = 0; i < items.length; i++) {
             final int index = i;
             TextView t = new TextView(this);

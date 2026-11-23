@@ -36,11 +36,12 @@ work exactly the same way.
 - **Shards:** collecting is quiet, with no popups or vibrations. The **Shards** button on Collect
   opens a screen listing every Bluetooth device you've passed: the shard it drops, whether you
   collected it, and how long until it's ready again.
-- **Dungeons:** on a wild echoid's page, **Jack in** connects the phone to that network (it
-  asks for the password, and Android asks you to confirm) and opens the network's
-  [dungeon](#dungeons). While jacked in, the Collect tab becomes **Dungeon**, and PAC and Craft
-  are hidden. If the connection drops, you're ejected. Needs Android 10 or newer; enterprise
-  (802.1X) and WEP networks can't be joined.
+- **Dungeons:** while the phone is on WiFi, a **Jack in** tab appears at the bottom. It shows
+  the [dungeon](#dungeons) hidden in the network you're connected to (connect in Android's own
+  WiFi settings; the game never connects for you), and its **Jack in** button takes you in.
+  While jacked in, the Collect tab becomes **Dungeon**, and PAC and Craft are hidden. Leave
+  that network and you're ejected. Android only says which network you're on with location
+  access, and with location turned on.
 - **Echoid details:** tap any echoid to see its sprite, rarity, star rating and each stat's
   roll, plus its moves, the next move it learns, the moves its type can't learn, and its
   active hours. From the same screen you can make it your lead, use an item on it, or move
@@ -361,7 +362,7 @@ press **OK** and choose **Jack in**. Type the network's password on the Flipper 
   settings. You can use items between fights and change your lead.
 - **No catching, no running:** dungeon echoids can only be fought. Wins still give XP,
   shared as usual.
-- **Ejected:** if your whole team faints, or (on Android) the connection drops, you're
+- **Ejected:** if your whole team faints, or (on Android) the phone leaves the network, you're
   thrown out. Jacking out by choice also leaves; either way the dungeon starts again from
   the first room next time.
 - **Rewards:** beating the boss gives a Prismatic shard of the dungeon's element, 2 Great

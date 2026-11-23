@@ -39,7 +39,6 @@ final class RadioScanner {
     private final BluetoothAdapter bluetooth;
     private final Map<String, Long> btLastSent = new HashMap<>();
     /** Security of each access point seen ("[WPA2-PSK-CCMP][ESS]"), by BSSID in upper case. */
-    private static final Map<String, String> wifiSecurity = new HashMap<>();
     private BluetoothLeScanner bleScanner;
     private boolean bleRunning;
     private boolean receiverRegistered;
@@ -190,7 +189,6 @@ final class RadioScanner {
             String ssid = r.SSID;
             if(ssid != null && ssid.startsWith("\"") && ssid.endsWith("\"") && ssid.length() >= 2)
                 ssid = ssid.substring(1, ssid.length() - 1);
-            if(r.capabilities != null) wifiSecurity.put(r.BSSID.toUpperCase(java.util.Locale.ROOT), r.capabilities);
             Engine.pushSighting(Engine.SIGHTING_WIFI, mac, r.level, ssid == null ? "" : ssid);
         }
     }
@@ -258,33 +256,5 @@ final class RadioScanner {
             return null;
         }
         return any ? mac : null;
-    }
-
-    /**
-     * The security flags last seen for an access point, or "" if unknown.
-     * Falls back to the system's latest scan results (by BSSID, then by name),
-     * since our own map only fills while the game is scanning.
-     */
-    @SuppressLint("MissingPermission")
-    static String security(Context context, String bssid, String ssid) {
-        String caps = wifiSecurity.get(bssid.toUpperCase(java.util.Locale.ROOT));
-        if(caps != null) return caps;
-        List<android.net.wifi.ScanResult> results;
-        try {
-            WifiManager w = (WifiManager)context.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-            results = w == null ? null : w.getScanResults();
-        } catch(SecurityException e) {
-            results = null;
-        }
-        if(results == null) return "";
-        String byName = null;
-        for(android.net.wifi.ScanResult r : results) {
-            if(r.capabilities == null || r.BSSID == null) continue;
-            if(r.BSSID.equalsIgnoreCase(bssid)) return r.capabilities;
-            String s = r.SSID;
-            if(s != null && s.startsWith("\"") && s.endsWith("\"") && s.length() >= 2) s = s.substring(1, s.length() - 1);
-            if(byName == null && ssid.equals(s)) byName = r.capabilities;
-        }
-        return byName == null ? "" : byName;
     }
 }

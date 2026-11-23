@@ -64,9 +64,12 @@ char* engine_reset(void);
 
 /* ---- Dungeons (see src/session.h) ---- */
 char* engine_jack_in_check(uint32_t nearby_index);
-void engine_link_up(const uint8_t mac[6]);
+/* The phone is on this WiFi network (its BSSID and name). */
+void engine_link_up(const uint8_t mac[6], const char* ssid);
 void engine_link_down(void);
 char* engine_jack_in(uint32_t nearby_index);
+/* Jacks in to the network the phone is connected to. */
+char* engine_jack_in_linked(void);
 char* engine_dungeon_room(void);
 char* engine_dungeon_next(void);
 char* engine_dungeon_leave(void);

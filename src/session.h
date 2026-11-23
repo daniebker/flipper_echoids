@@ -128,6 +128,7 @@ typedef struct {
     /* Jacking in: the platform connects to a network and reports it here. */
     bool link_up;
     uint8_t link_mac[6];
+    char link_ssid[NAME_LEN]; /* "" if the platform didn't say */
     Dungeon dungeon;
 
     SessionEvent events[SESSION_EVENTS_MAX];
@@ -207,6 +208,13 @@ void session_link_up(Session* s, const uint8_t mac[6]);
 void session_link_down(Session* s);
 bool session_wants_link(const Session* s);
 bool session_jack_in(Session* s, uint8_t nearby_index);
+/* Or: the platform reports the network it's already on (session_link_named())
+ * and the player jacks in to that one, nearby or not. */
+void session_link_named(Session* s, const uint8_t mac[6], const char* ssid);
+bool session_jack_in_linked(Session* s);
+/* The dungeon of the network you're connected to, as it would be (for a
+ * preview). False if not connected. */
+bool session_linked_dungeon(const Session* s, char* name, size_t name_len, DungeonLayout* map);
 bool session_in_dungeon(const Session* s);
 /* Team level the dungeon's echoids match: the team's average, rounded up. */
 uint8_t session_team_level(const Session* s);

@@ -113,6 +113,7 @@ static char* chk(char* json) {
 #define engine_shards_json() chk(engine_shards_json())
 #define engine_jack_in_check(a) chk(engine_jack_in_check(a))
 #define engine_jack_in(a) chk(engine_jack_in(a))
+#define engine_jack_in_linked() chk(engine_jack_in_linked())
 #define engine_dungeon_room() chk(engine_dungeon_room())
 #define engine_dungeon_next() chk(engine_dungeon_next())
 #define engine_dungeon_leave() chk(engine_dungeon_leave())
@@ -207,13 +208,22 @@ static void test_dungeon(void) {
     heal_team();
 
     /* You must be connected to that network to jack in. */
+    /* The Android app jacks in to whatever network the phone is on. */
     CHECK(ok(engine_jack_in_check(0)));
     CHECK(!ok(engine_jack_in(0)));
+    CHECK(!ok(engine_jack_in_linked())); /* not on WiFi */
+    CHECK(contains(engine_dungeon_json(), "\"linked\":false"));
     uint8_t other[6] = {1, 2, 3, 4, 5, 6};
-    engine_link_up(other);
-    CHECK(!ok(engine_jack_in(0)));
-    engine_link_up(mac);
-    CHECK(ok(engine_jack_in(0)));
+    engine_link_up(other, "Elsewhere");
+    CHECK(contains(engine_dungeon_json(), "\"linked\":true"));
+    CHECK(contains(engine_dungeon_json(), "\"ssid\":\"Elsewhere\""));
+    CHECK(contains(engine_dungeon_json(), "\"boss\":{"));
+    CHECK(!ok(engine_jack_in(0))); /* by index, only that echoid's own network */
+    engine_link_up(mac, "Home \"net\"");
+    CHECK(contains(engine_dungeon_json(), "Home \\\"net\\\"")); /* escaped */
+    CHECK(ok(engine_jack_in_linked()));
+    CHECK(contains(engine_dungeon_json(), "\"ssid\":\"Home \\\"net\\\"\""));
+    CHECK(!ok(engine_jack_in_linked())); /* already in */
     CHECK(contains(engine_state_json(), "\"inDungeon\":true"));
     CHECK(contains(engine_state_json(), "\"wantsLink\":true"));
     CHECK(contains(engine_dungeon_json(), "\"kind\":\"boss\""));
@@ -231,8 +241,8 @@ static void test_dungeon(void) {
     for(int attempt = 0; attempt < 4; attempt++) {
         if(attempt > 0) {
             heal_team();
-            engine_link_up(mac);
-            if(!ok(engine_jack_in(0))) break;
+            engine_link_up(mac, "Home");
+            if(!ok(engine_jack_in_linked())) break;
         }
         heal_team();
         rooms = 0;
@@ -268,13 +278,14 @@ static void test_dungeon(void) {
     CHECK(contains(engine_state_json(), "\"wantsLink\":false"));
 
     /* A dropped connection throws you out. */
-    engine_link_up(mac);
+    engine_link_up(mac, "Home");
     heal_team();
-    CHECK(ok(engine_jack_in(0)));
+    CHECK(ok(engine_jack_in_linked()));
     engine_link_down();
     CHECK(contains(engine_state_json(), "\"inDungeon\":false"));
     CHECK(contains(engine_take_events_json(), "\"kind\":\"ejected\""));
-    CHECK(!ok(engine_jack_in(0))); /* not connected any more */
+    CHECK(!ok(engine_jack_in_linked())); /* not connected any more */
+    CHECK(contains(engine_dungeon_json(), "\"linked\":false"));
 }
 
 /* The wild echoid's MAC in the current battle (as JSON text). */

@@ -1,23 +1,31 @@
 # Dungeons
 
 Every WiFi network you can connect to hides a dungeon. To enter one you have to **jack in**:
-connect to the network itself. On the Flipper, the ESP32 board joins it; on Android, the
-phone does. A dungeon is a row of rooms with a **boss** at the end.
+be on the network itself. On the Flipper, the ESP32 board joins it; on Android, you use the
+network the phone is already connected to. A dungeon is a row of rooms with a **boss** at the end.
 
 [Home](Home.md) · [Echoids](Echoids.md) · [Types](Types.md) · [Battles](Battles.md) · [Items and Crafting](Items-and-Crafting.md)
 
 ## Jacking in
 
-1. Start Collect and find the network's echoid in the list.
-2. Choose **Jack in**: on the Flipper, press **OK** on the echoid; on Android, open the
-   echoid and tap **Jack in**.
-3. Enter the network's password. On the Flipper, leave it empty for an open network.
-   Android already knows which networks are open, and asks you to confirm the connection.
-4. Once the connection is made, you're in.
+**On the Flipper:**
 
-You need a team member that can still fight. Hidden networks can't be joined. On
-Android, enterprise (802.1X) and WEP networks can't be joined, and Android 10 or newer is
-needed.
+1. Start Collect and find the network's echoid in the list.
+2. Press **OK** on the echoid and choose **Jack in**.
+3. Enter the network's password (leave it empty for an open network).
+4. Once the board has connected, you're in. Hidden networks can't be joined.
+
+**On Android:**
+
+1. Connect the phone to a WiFi network as usual, in Android's settings.
+2. A **Jack in** tab appears at the bottom. It shows that network's dungeon: its name,
+   element, rooms and boss.
+3. Tap **Jack in**. Leaving the network (or switching to another) throws you out.
+
+Android only tells the game which network you're on with location access, and with location
+turned on. Any network works, enterprise and WEP included, since the game doesn't connect.
+
+You need a team member that can still fight.
 
 ## One dungeon per network
 

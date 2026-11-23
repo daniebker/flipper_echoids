@@ -253,19 +253,16 @@ JNIEXPORT jstring JNICALL JNI_FN(dungeon)(JNIEnv* env, jclass cls) {
     LOCKED_JSON(engine_dungeon_json());
 }
 
-JNIEXPORT jstring JNICALL JNI_FN(jackInCheck)(JNIEnv* env, jclass cls, jint index) {
-    (void)cls;
-    LOCKED_JSON(engine_jack_in_check((uint32_t)index));
-}
-
-JNIEXPORT void JNICALL JNI_FN(linkUp)(JNIEnv* env, jclass cls, jbyteArray mac) {
+JNIEXPORT void JNICALL JNI_FN(linkUp)(JNIEnv* env, jclass cls, jbyteArray mac, jstring ssid) {
     (void)cls;
     uint8_t m[6] = {0};
     if((*env)->GetArrayLength(env, mac) < 6) return;
     (*env)->GetByteArrayRegion(env, mac, 0, 6, (jbyte*)m);
+    const char* s = ssid ? (*env)->GetStringUTFChars(env, ssid, NULL) : NULL;
     pthread_mutex_lock(&lock);
-    engine_link_up(m);
+    engine_link_up(m, s ? s : "");
     pthread_mutex_unlock(&lock);
+    if(s) (*env)->ReleaseStringUTFChars(env, ssid, s);
 }
 
 JNIEXPORT void JNICALL JNI_FN(linkDown)(JNIEnv* env, jclass cls) {
@@ -276,9 +273,9 @@ JNIEXPORT void JNICALL JNI_FN(linkDown)(JNIEnv* env, jclass cls) {
     pthread_mutex_unlock(&lock);
 }
 
-JNIEXPORT jstring JNICALL JNI_FN(jackIn)(JNIEnv* env, jclass cls, jint index) {
+JNIEXPORT jstring JNICALL JNI_FN(jackIn)(JNIEnv* env, jclass cls) {
     (void)cls;
-    LOCKED_JSON(engine_jack_in((uint32_t)index));
+    LOCKED_JSON(engine_jack_in_linked());
 }
 
 JNIEXPORT jstring JNICALL JNI_FN(dungeonRoom)(JNIEnv* env, jclass cls) {

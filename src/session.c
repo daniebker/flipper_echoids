@@ -715,8 +715,13 @@ bool session_jack_in_check(Session* s, uint8_t index) {
 }
 
 void session_link_up(Session* s, const uint8_t mac[6]) {
+    session_link_named(s, mac, "");
+}
+
+void session_link_named(Session* s, const uint8_t mac[6], const char* ssid) {
     s->link_up = true;
     memcpy(s->link_mac, mac, 6);
+    snprintf(s->link_ssid, sizeof(s->link_ssid), "%s", ssid ? ssid : "");
 }
 
 void session_link_down(Session* s) {
@@ -733,20 +738,40 @@ bool session_wants_link(const Session* s) {
     return s->dungeon.active;
 }
 
+static void dungeon_open(Session* s, const uint8_t mac[6], const char* ssid) {
+    Dungeon* d = &s->dungeon;
+    memset(d, 0, sizeof(*d));
+    memcpy(d->mac, mac, 6);
+    snprintf(d->ssid, sizeof(d->ssid), "%s", ssid);
+    dungeon_name(mac, d->name, sizeof(d->name));
+    dungeon_layout(mac, &d->map);
+    d->active = true;
+    if(s->scanning) session_scan_stop(s);
+    say(s, "Jacked in: %s", d->name);
+}
+
 bool session_jack_in(Session* s, uint8_t index) {
     if(!session_jack_in_check(s, index)) return false;
     const Nearby* n = &s->nearby[index];
     /* You have to be connected to the network itself. */
     if(!s->link_up || memcmp(s->link_mac, n->mac, 6) != 0) FAIL(s, "Connect to the network first");
-    Dungeon* d = &s->dungeon;
-    memset(d, 0, sizeof(*d));
-    memcpy(d->mac, n->mac, 6);
-    snprintf(d->ssid, sizeof(d->ssid), "%s", n->ssid);
-    dungeon_name(n->mac, d->name, sizeof(d->name));
-    dungeon_layout(n->mac, &d->map);
-    d->active = true;
-    if(s->scanning) session_scan_stop(s);
-    say(s, "Jacked in: %s", d->name);
+    dungeon_open(s, n->mac, n->ssid);
+    return true;
+}
+
+bool session_jack_in_linked(Session* s) {
+    if(s->in_battle) FAIL(s, "Finish the battle first");
+    if(s->dungeon.active) FAIL(s, "Already jacked in");
+    if(!s->link_up) FAIL(s, "Connect to a WiFi network first");
+    if(!team_can_fight(s)) FAIL(s, "All fainted: use Revives");
+    dungeon_open(s, s->link_mac, s->link_ssid[0] ? s->link_ssid : "WiFi");
+    return true;
+}
+
+bool session_linked_dungeon(const Session* s, char* name, size_t name_len, DungeonLayout* map) {
+    if(!s->link_up) return false;
+    dungeon_name(s->link_mac, name, name_len);
+    dungeon_layout(s->link_mac, map);
     return true;
 }
 

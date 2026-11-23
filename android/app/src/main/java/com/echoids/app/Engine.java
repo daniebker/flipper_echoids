@@ -58,10 +58,11 @@ final class Engine {
 
     /* Dungeons */
     static native String dungeon();
-    static native String jackInCheck(int nearbyIndex);
-    static native void linkUp(byte[] mac);
+    /** The phone is on this WiFi network (BSSID bytes and name). */
+    static native void linkUp(byte[] mac, String ssid);
     static native void linkDown();
-    static native String jackIn(int nearbyIndex);
+    /** Jacks in to the network the phone is connected to. */
+    static native String jackIn();
     static native String dungeonRoom();
     static native String dungeonNext();
     static native String dungeonLeave();

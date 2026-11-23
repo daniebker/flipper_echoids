@@ -156,6 +156,6 @@ final class DungeonScreen extends Screen {
     }
 
     private void jackOut() {
-        if(app.act(Engine.dungeonLeave())) app.link.release();
+        app.act(Engine.dungeonLeave());
     }
 }
