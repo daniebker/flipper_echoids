@@ -143,6 +143,9 @@ extern const size_t recipe_count;
 uint32_t inventory_shard_total(const Inventory* inv);
 
 /* ---------- Shard cooldowns ---------- */
+/* Compact duration: "<1m", "42m", "3h05m". */
+void format_duration(uint32_t seconds, char* out, size_t size);
+
 /* Seconds before the same Bluetooth device can drop its shard again. */
 uint32_t shard_cooldown_s(uint8_t tier);
 

@@ -317,6 +317,16 @@ static const uint32_t shard_cooldowns[SHARD_TIER_COUNT] = {
     4u * 60u * 60u, /* Prismatic: 4 hours */
 };
 
+void format_duration(uint32_t seconds, char* out, size_t size) {
+    uint32_t minutes = (seconds + 59u) / 60u; /* round up: never show 0m left */
+    if(seconds < 60u)
+        snprintf(out, size, "<1m");
+    else if(minutes < 60u)
+        snprintf(out, size, "%lum", (unsigned long)minutes);
+    else
+        snprintf(out, size, "%luh%02lum", (unsigned long)(minutes / 60u), (unsigned long)(minutes % 60u));
+}
+
 uint32_t shard_cooldown_s(uint8_t tier) {
     return shard_cooldowns[tier % SHARD_TIER_COUNT];
 }

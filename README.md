@@ -94,6 +94,9 @@ Shards come in 8 elements (the same as the creature types) and three tiers:
 
 Once a Bluetooth device has dropped its shard, it won't drop it again until its
 cooldown has passed. Closing and reopening Collect, or the whole app, doesn't reset it.
+If you pass a device that's still recharging, a popup shows how long is left, for example
+`Bright Tide: 42m left` (Prismatic is shortened to `Prism` to fit). Each device's popup appears
+once per Collect visit and never covers a `+1 … shard` popup.
 Rarer shards take longer to recharge:
 
 | Shard tier | Cooldown |

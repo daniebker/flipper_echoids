@@ -28,6 +28,7 @@
 #define NEARBY_ROWS      3
 #define CRAFT_ROWS       3
 #define SPOTTED_MAX      128
+#define RECHARGE_NOTED_MAX 48
 
 typedef enum {
     ScreenIntro,
@@ -122,6 +123,11 @@ typedef struct {
 
     char toast[40];
     uint32_t toast_until;
+    bool toast_important; /* a "+1 shard" popup: don't cover it with a recharge note */
+
+    /* Devices whose "recharging" popup was already shown this Collect visit. */
+    uint32_t recharge_noted[RECHARGE_NOTED_MAX];
+    uint8_t recharge_noted_count;
 } App;
 
 /* ------------------------------------------------------------------------- */
@@ -132,6 +138,11 @@ static void app_toast(App* app, const char* msg) {
     strncpy(app->toast, msg, sizeof(app->toast) - 1);
     app->toast[sizeof(app->toast) - 1] = '\0';
     app->toast_until = furi_get_tick() + furi_ms_to_ticks(TOAST_MS);
+    app->toast_important = false;
+}
+
+static bool app_toast_showing(App* app) {
+    return app->toast[0] && (int32_t)(app->toast_until - furi_get_tick()) > 0;
 }
 
 static Echoid* app_lead(App* app) {
@@ -1295,6 +1306,7 @@ static void collect_start(App* app) {
             app->nearby[i].state = NearbyOwned;
     }
     app->scan_started = furi_get_tick();
+    app->recharge_noted_count = 0;
     ScanConfig cfg;
     app_scan_config(app, &cfg);
     if(!scanner_start(app->scanner, (ScanSource)app->save.source, &cfg)) {
@@ -1352,6 +1364,7 @@ static void handle_ap(App* app, const ScanEvent* ev) {
 static void handle_bt(App* app, const ScanEvent* ev) {
     SaveData* sv = &app->save;
     uint32_t h = echo_hash_mac(ev->mac);
+    uint32_t remaining = 0;
     Shard s = shard_from_mac(ev->mac);
     /* Each device recharges before it drops its shard again; rarer shards take longer. */
     if(!shard_claim(
@@ -1362,7 +1375,25 @@ static void handle_bt(App* app, const ScanEvent* ev) {
            h,
            s.tier,
            furi_hal_rtc_get_timestamp(),
-           NULL)) {
+           &remaining)) {
+        /* Tell the player once per Collect visit, without hiding a new shard. */
+        bool noted = false;
+        for(uint8_t i = 0; i < app->recharge_noted_count && !noted; i++)
+            noted = app->recharge_noted[i] == h;
+        if(noted || (app->toast_important && app_toast_showing(app))) return;
+        if(app->recharge_noted_count < RECHARGE_NOTED_MAX)
+            app->recharge_noted[app->recharge_noted_count++] = h;
+        char left[12];
+        format_duration(remaining, left, sizeof(left));
+        char msg[40];
+        snprintf(
+            msg,
+            sizeof(msg),
+            "%s %s: %s left",
+            s.tier == ShardPrismatic ? "Prism" : shard_tier_name(s.tier), /* fit 128px */
+            echo_type_name(s.type),
+            left);
+        app_toast(app, msg);
         return;
     }
     if(sv->inv.shards[s.type][s.tier] < 9999) sv->inv.shards[s.type][s.tier]++;
@@ -1373,6 +1404,7 @@ static void handle_bt(App* app, const ScanEvent* ev) {
     char msg[40];
     snprintf(msg, sizeof(msg), "+1 %s %s shard", shard_tier_name(s.tier), echo_type_name(s.type));
     app_toast(app, msg);
+    app->toast_important = true;
     notification_message(
         app->notif, s.tier == ShardPrismatic ? &sequence_blink_magenta_100 : &sequence_blink_cyan_10);
 }

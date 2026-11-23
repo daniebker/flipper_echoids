@@ -184,6 +184,20 @@ static void test_shard_cooldown(void) {
     CHECK(found_ee == 1 && found_bb == 0); /* 0xBB (time t-10) was the oldest */
 }
 
+static void test_format_duration(void) {
+    char b[16];
+    format_duration(0, b, sizeof(b));
+    CHECK(strcmp(b, "<1m") == 0);
+    format_duration(61, b, sizeof(b));
+    CHECK(strcmp(b, "2m") == 0);
+    format_duration(15 * 60, b, sizeof(b));
+    CHECK(strcmp(b, "15m") == 0);
+    format_duration(4 * 3600 - 1, b, sizeof(b));
+    CHECK(strcmp(b, "4h00m") == 0);
+    format_duration(3600 + 5 * 60, b, sizeof(b));
+    CHECK(strcmp(b, "1h05m") == 0);
+}
+
 static void test_type_chart(void) {
     CHECK(echo_type_mult(EchoTypeTide, EchoTypeEmber) == 200);
     CHECK(echo_type_mult(EchoTypeEmber, EchoTypeTide) == 50);
@@ -258,6 +272,7 @@ int main(void) {
     test_progression_and_battle();
     test_type_chart();
     test_shard_cooldown();
+    test_format_duration();
     if(failures) {
         printf("%d failure(s)\n", failures);
         return 1;
