@@ -3,7 +3,6 @@ package com.echoids.app;
 import android.util.SparseArray;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.AbsListView;
 import android.widget.BaseAdapter;
 import android.widget.LinearLayout;
 import android.widget.ListView;
@@ -74,15 +73,9 @@ final class PacScreen extends Screen {
             public View getView(int position, View convertView, ViewGroup parent) {
                 JSONObject e = (JSONObject)getItem(position);
                 if(e == null) return new TextView(app);
-                View row = Rows.echoid(app, e, null, 0, false, null);
-                row.setLayoutParams(new AbsListView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-                /* Cards in a ListView need their margins as padding on a wrapper. */
-                LinearLayout wrap = Ui.column(app);
-                wrap.setPadding(0, 0, 0, 0);
-                ((ViewGroup)row).setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-                LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams)row.getLayoutParams();
-                lp.setMargins(Ui.dp(app, 12), Ui.dp(app, 6), Ui.dp(app, 12), Ui.dp(app, 6));
-                wrap.addView(row);
+                /* The card keeps its margins inside this wrapper row. */
+                LinearLayout wrap = new LinearLayout(app);
+                wrap.addView(Rows.echoid(app, e, null, 0, false, null));
                 return wrap;
             }
         });
