@@ -116,6 +116,14 @@ uint32_t game_rand_range(uint32_t n); /* 0..n-1 */
 uint32_t echo_hash_mac(const uint8_t mac[6]);
 void echo_genes(const uint8_t mac[6], EchoGenes* out);
 const char* echo_species_name(const uint8_t mac[6]);
+/* The echoid's own name, generated from its MAC with a Markov chain trained
+ * on words themed after its type. Always the same for the same MAC. */
+#define ECHO_NAME_MIN 4
+#define ECHO_NAME_MAX 9
+#define ECHO_NAME_LEN (ECHO_NAME_MAX + 1)
+void echo_name(const uint8_t mac[6], char* out, size_t size);
+/* Themed source words for a type's names (NULL-terminated list). */
+const char* const* echo_name_corpus(uint8_t type);
 const char* echo_type_name(uint8_t type);
 const char* echo_type_short(uint8_t type);
 const char* echo_rarity_name(uint8_t rarity);

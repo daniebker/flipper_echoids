@@ -291,6 +291,156 @@ const char* species_name_of(uint8_t type, uint8_t species) {
     return species_names[type % ECHO_TYPE_COUNT][species % SPECIES_PER_TYPE];
 }
 
+/* ---- Names: an order-2 character Markov chain per type ---- */
+
+static const char* const name_corpus_tide[] = {
+    "marina", "coral", "brine", "lagoon", "nautil", "ripple", "current", "pelago", "undine",
+    "seafoam", "delta", "kelp", "tidal", "surge", "aqua", "maris", "oceane", "wavelet",
+    "estuary", "rivulet", "cascade", "torrent", "shoal", "neris", "mistral", "drizzle",
+    "salinas", "bayou", "fjordan", "naiad", "pacifa", "undertow", NULL};
+static const char* const name_corpus_ember[] = {
+    "cinder", "blaze", "ashen", "pyra", "scorch", "kindle", "flare", "sear", "emberly", "forge",
+    "fuego", "ignis", "magma", "vulcan", "sulfur", "char", "smolder", "inferna", "brazier",
+    "phlox", "torcha", "calder", "flamel", "sorrin", "kilnor", "pyrite", "fervor", "hearth",
+    "tinder", "embrix", "solaris", "caldera", NULL};
+static const char* const name_corpus_flora[] = {
+    "fern", "bramble", "willow", "thistle", "sorrel", "clover", "moss", "juniper", "verdan",
+    "sylva", "ivy", "laurel", "briar", "petal", "rowan", "sprig", "hazel", "myrtle", "acacia",
+    "tansy", "lupin", "aspen", "cedar", "basil", "yarrow", "primula", "orchis", "sequoia",
+    "bryony", "verbena", "mallow", "linden", NULL};
+static const char* const name_corpus_stone[] = {
+    "granite", "basalt", "shale", "flint", "obsid", "quarry", "boulder", "slate", "cragg",
+    "tor", "marble", "gravel", "onyx", "ferro", "petra", "rubble", "agate", "jasper", "cobble",
+    "dolomit", "garnet", "pumice", "quartz", "geode", "mica", "bedrock", "talus", "ironclad",
+    "tektite", "cairn", "monolith", "ore", NULL};
+static const char* const name_corpus_spark[] = {
+    "volta", "ampere", "ion", "tesla", "arc", "static", "fulgor", "zappo", "joule", "ohmic",
+    "flux", "bolt", "kilo", "voltan", "galvan", "quark", "plasma", "dynamo", "neutron",
+    "coulomb", "fizz", "jolt", "sparx", "kinetic", "faraday", "circuit", "current", "diode",
+    "farad", "zapper", "lumen", "electra", NULL};
+static const char* const name_corpus_gale[] = {
+    "zephyr", "sirocco", "mistral", "cirrus", "gust", "aeris", "breeze", "vento", "tempest",
+    "nimbus", "boreas", "squall", "drift", "aloft", "kite", "whirl", "cyclo", "stratus",
+    "haboob", "chinook", "levant", "foehn", "notus", "eurus", "swift", "windle", "aura", "skye",
+    "gusto", "flurry", "plume", "soar", NULL};
+static const char* const name_corpus_pulse[] = {
+    "echo", "sonar", "radar", "beacon", "hertz", "chirp", "tonal", "reson", "signal", "baud",
+    "modem", "pingo", "doppler", "octave", "cadence", "trill", "sonic", "tempo", "rhythm",
+    "chime", "carrier", "antenna", "decibel", "phonic", "ripplon", "vibra", "oscilla", "morse",
+    "static", "harmon", "tremolo", "resona", NULL};
+static const char* const name_corpus_void[] = {
+    "umbra", "nyx", "shade", "null", "eclipse", "noctis", "abyss", "hollow", "murk", "vesper",
+    "tenebra", "gloom", "wraith", "nihil", "oblivia", "dusk", "shroud", "nether", "eventide",
+    "phantom", "obscura", "limbo", "spectra", "caliga", "nocturn", "grimm", "erebus", "vanta",
+    "silhou", "morrow", "ombra", "dimm", NULL};
+
+static const char* const* const name_corpora[ECHO_TYPE_COUNT] = {
+    name_corpus_tide,
+    name_corpus_ember,
+    name_corpus_flora,
+    name_corpus_stone,
+    name_corpus_spark,
+    name_corpus_gale,
+    name_corpus_pulse,
+    name_corpus_void,
+};
+
+const char* const* echo_name_corpus(uint8_t type) {
+    return name_corpora[type % ECHO_TYPE_COUNT];
+}
+
+#define NAME_START '^'
+#define NAME_END   '$'
+
+/* Character at position i of "^^word$" (the word padded for an order-2 chain). */
+static char padded_at(const char* w, size_t len, size_t i) {
+    if(i < 2) return NAME_START;
+    if(i - 2 < len) return w[i - 2];
+    return NAME_END;
+}
+
+/* Collects every character that follows the context in the corpus, once per
+ * occurrence, so frequent transitions are more likely. With order 1 only the
+ * last character (b) has to match, which gives more variety. */
+static size_t name_candidates(
+    const char* const* corpus,
+    char a,
+    char b,
+    int order,
+    char* out,
+    size_t max) {
+    size_t n = 0;
+    for(const char* const* w = corpus; *w; w++) {
+        size_t len = strlen(*w);
+        for(size_t i = 0; i + 2 < len + 3; i++) {
+            bool match = padded_at(*w, len, i + 1) == b &&
+                         (order == 1 || padded_at(*w, len, i) == a);
+            if(match && n < max) out[n++] = padded_at(*w, len, i + 2);
+        }
+    }
+    return n;
+}
+
+static bool name_in_corpus(const char* const* corpus, const char* name) {
+    for(const char* const* w = corpus; *w; w++)
+        if(strcmp(*w, name) == 0) return true;
+    return false;
+}
+
+/* One walk of the chain. Returns the length produced. */
+static size_t name_walk(const char* const* corpus, MacStream* st, char* out) {
+    char a = NAME_START, b = NAME_START;
+    size_t len = 0;
+    char cand[128];
+    while(len < ECHO_NAME_MAX) {
+        /* Mostly order 2 (keeps names pronounceable), sometimes order 1. */
+        int order = (len >= 2 && mac_stream_next(st) % 4 == 0) ? 1 : 2;
+        size_t n = name_candidates(corpus, a, b, order, cand, sizeof(cand));
+        if(n == 0 && order == 1) n = name_candidates(corpus, a, b, 2, cand, sizeof(cand));
+        if(n == 0) break;
+        /* Too short to end yet: drop the end marker if anything else can follow. */
+        if(len < ECHO_NAME_MIN) {
+            size_t k = 0;
+            for(size_t i = 0; i < n; i++)
+                if(cand[i] != NAME_END) cand[k++] = cand[i];
+            if(k == 0) break;
+            n = k;
+        }
+        char c = cand[mac_stream_next(st) % n];
+        if(c == NAME_END) break;
+        out[len++] = c;
+        a = b;
+        b = c;
+    }
+    out[len] = '\0';
+    return len;
+}
+
+void echo_name(const uint8_t mac[6], char* out, size_t size) {
+    if(size == 0) return;
+    EchoGenes g;
+    echo_genes(mac, &g);
+    const char* const* corpus = name_corpora[g.type];
+    /* Its own salted stream, so names don't correlate with stats. */
+    MacStream st = {.s = g.seed ^ 0x6E616D65u /* "name" */};
+    char name[ECHO_NAME_LEN];
+    char best[ECHO_NAME_LEN] = "";
+    /* Prefer a new word of the right length over copying a source word. */
+    for(int attempt = 0; attempt < 8; attempt++) {
+        size_t len = name_walk(corpus, &st, name);
+        if(len < ECHO_NAME_MIN) continue;
+        if(!best[0]) strcpy(best, name);
+        if(!name_in_corpus(corpus, name)) {
+            strcpy(best, name);
+            break;
+        }
+    }
+    if(!best[0]) strcpy(best, corpus[0]);
+    best[0] = (char)(best[0] >= 'a' && best[0] <= 'z' ? best[0] - 'a' + 'A' : best[0]);
+    strncpy(out, best, size - 1);
+    out[size - 1] = '\0';
+}
+
 const char* echo_species_name(const uint8_t mac[6]) {
     EchoGenes g;
     echo_genes(mac, &g);
@@ -701,7 +851,9 @@ void battle_start(Battle* b, Echoid* mine, const uint8_t mac[6], uint8_t level, 
     echo_init(&b->wild, mac, level, ssid);
     b->result = BattleOngoing;
     char msg[BATTLE_LOG_LEN];
-    snprintf(msg, sizeof(msg), "A wild %s appears!", echo_species_name(mac));
+    char name[ECHO_NAME_LEN];
+    echo_name(mac, name, sizeof(name));
+    snprintf(msg, sizeof(msg), "A wild %s appears!", name);
     battle_log(b, msg);
 }
 
@@ -806,7 +958,9 @@ void battle_switch(Battle* b, Echoid* next, bool costs_turn) {
     b->mine = next;
     note_fought(b, next);
     char msg[BATTLE_LOG_LEN];
-    snprintf(msg, sizeof(msg), "Go, %s!", echo_species_name(next->mac));
+    char name[ECHO_NAME_LEN];
+    echo_name(next->mac, name, sizeof(name));
+    snprintf(msg, sizeof(msg), "Go, %s!", name);
     battle_log(b, msg);
     if(costs_turn) enemy_turn(b);
 }
@@ -838,7 +992,9 @@ bool battle_throw(Battle* b, Inventory* inv, uint8_t ball) {
     char msg[BATTLE_LOG_LEN];
     if(game_rand_range(100) < chance) {
         b->result = BattleCaptured;
-        snprintf(msg, sizeof(msg), "Gotcha! %s caught!", echo_species_name(b->wild.mac));
+        char name[ECHO_NAME_LEN];
+        echo_name(b->wild.mac, name, sizeof(name));
+        snprintf(msg, sizeof(msg), "Gotcha! %s caught!", name);
         battle_log(b, msg);
         award_xp(b, true);
     } else {

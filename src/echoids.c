@@ -384,11 +384,16 @@ static void draw_intro(App* app, Canvas* canvas) {
     draw_sprite(canvas, e->mac, 2, 16, 2);
     canvas_set_font(canvas, FontSecondary);
     char buf[32];
-    canvas_draw_str(canvas, 40, 22, echo_species_name(e->mac));
-    snprintf(buf, sizeof(buf), "%s - %s", echo_type_name(g.type), echo_rarity_name(g.rarity));
-    canvas_draw_str(canvas, 40, 31, buf);
-    canvas_draw_str(canvas, 40, 40, "Level 1");
-    canvas_draw_str(canvas, 40, 49, "Born from your MAC");
+    char name[ECHO_NAME_LEN];
+    echo_name(e->mac, name, sizeof(name));
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str(canvas, 40, 23, name);
+    canvas_set_font(canvas, FontSecondary);
+    snprintf(buf, sizeof(buf), "%s, %s", echo_species_name(e->mac), echo_type_name(g.type));
+    canvas_draw_str(canvas, 40, 32, buf);
+    snprintf(buf, sizeof(buf), "%s, Level 1", echo_rarity_name(g.rarity));
+    canvas_draw_str(canvas, 40, 41, buf);
+    canvas_draw_str(canvas, 40, 50, "Born from your MAC");
     elements_button_center(canvas, "Start");
 }
 
@@ -538,7 +543,9 @@ static void draw_collect(App* app, Canvas* canvas) {
         EchoGenes g;
         echo_genes(n->mac, &g);
         char buf[24];
-        snprintf(buf, sizeof(buf), "%s%s", nearby_state_mark(n->state), echo_species_name(n->mac));
+        char name[ECHO_NAME_LEN];
+        echo_name(n->mac, name, sizeof(name));
+        snprintf(buf, sizeof(buf), "%s%s", nearby_state_mark(n->state), name);
         canvas_draw_str(canvas, 2, y, buf);
         snprintf(buf, sizeof(buf), "L%u", echo_wild_level(n->mac, app_lead(app)->level));
         canvas_draw_str(canvas, 58, y, buf);
@@ -565,10 +572,10 @@ static void draw_collect(App* app, Canvas* canvas) {
         snprintf(
             buf,
             sizeof(buf),
-            "%s %s  Lv%u",
+            "%s %s %s",
+            echo_species_name(n->mac),
             echo_rarity_name(g.rarity),
-            echo_type_name(g.type),
-            wild.level);
+            echo_type_name(g.type));
         canvas_draw_str(canvas, 2, 54, buf);
         snprintf(
             buf, sizeof(buf), "HP%u ATK%u DEF%u SPD%u", st.max_hp, st.atk, st.def, st.spd);
@@ -585,16 +592,19 @@ static void draw_battle(App* app, Canvas* canvas) {
     echo_stats(b->mine, &sm);
 
     canvas_set_font(canvas, FontSecondary);
-    snprintf(buf, sizeof(buf), "%s L%u", echo_species_name(b->wild.mac), b->wild.level);
+    char name[ECHO_NAME_LEN];
+    echo_name(b->wild.mac, name, sizeof(name));
+    snprintf(buf, sizeof(buf), "%s L%u", name, b->wild.level);
     canvas_draw_str(canvas, 0, 8, buf);
     EchoGenes gw;
     echo_genes(b->wild.mac, &gw);
-    snprintf(buf, sizeof(buf), "%s %s", echo_type_short(gw.type), echo_rarity_name(gw.rarity));
+    snprintf(buf, sizeof(buf), "%s %s", echo_species_name(b->wild.mac), echo_type_short(gw.type));
     canvas_draw_str(canvas, 0, 17, buf);
     draw_hp_bar(canvas, 0, 19, 60, b->wild.hp, sw.max_hp);
     draw_sprite(canvas, b->wild.mac, 94, 0, 2);
 
-    snprintf(buf, sizeof(buf), "%s L%u", echo_species_name(b->mine->mac), b->mine->level);
+    echo_name(b->mine->mac, name, sizeof(name));
+    snprintf(buf, sizeof(buf), "%s L%u", name, b->mine->level);
     canvas_draw_str(canvas, 0, 32, buf);
     draw_hp_bar(canvas, 0, 34, 50, b->mine->hp, sm.max_hp);
     snprintf(buf, sizeof(buf), "%u/%u", b->mine->hp, sm.max_hp);
@@ -718,7 +728,9 @@ static void draw_roster(
         echo_stats(e, &s);
         int y = 22 + row * 10;
         draw_row(canvas, y, pos == sel);
-        snprintf(buf, sizeof(buf), "%s%s", (int32_t)pos == lead_pos ? ">" : " ", echo_species_name(e->mac));
+        char name[ECHO_NAME_LEN];
+        echo_name(e->mac, name, sizeof(name));
+        snprintf(buf, sizeof(buf), "%s%s", (int32_t)pos == lead_pos ? ">" : " ", name);
         canvas_draw_str(canvas, 2, y, buf);
         snprintf(buf, sizeof(buf), "L%u", e->level);
         canvas_draw_str(canvas, 62, y, buf);
@@ -835,7 +847,9 @@ static void draw_detail(App* app, Canvas* canvas) {
     char buf[40];
 
     canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str(canvas, 0, 9, echo_species_name(e->mac));
+    char name[ECHO_NAME_LEN];
+    echo_name(e->mac, name, sizeof(name));
+    canvas_draw_str(canvas, 0, 9, name);
     canvas_set_font(canvas, FontSecondary);
     snprintf(
         buf,
@@ -889,7 +903,11 @@ static void draw_detail(App* app, Canvas* canvas) {
             echo_type_name((uint8_t)((ge.type + ECHO_TYPE_COUNT - 1) % ECHO_TYPE_COUNT)));
         canvas_draw_str(canvas, 0, 63, buf);
     } else {
-        snprintf(buf, sizeof(buf), "From: %.20s", e->origin);
+        /* Species and where it was found */
+        if(e->origin[0])
+            snprintf(buf, sizeof(buf), "%s from %.14s", echo_species_name(e->mac), e->origin);
+        else
+            snprintf(buf, sizeof(buf), "%s", echo_species_name(e->mac));
         canvas_draw_str(canvas, 0, 54, buf);
         canvas_draw_str(canvas, 0, 63, "^v moves  OK actions");
     }
@@ -1785,12 +1803,14 @@ static void battle_results_build(App* app) {
     for(uint8_t i = 0; i < b->fought_n; i++) {
         Echoid* e = b->fought[i];
         uint8_t before = b->fought_level_before[i];
+        char name[ECHO_NAME_LEN];
+        echo_name(e->mac, name, sizeof(name));
         if(e->level > before)
             snprintf(
                 line,
                 sizeof(line),
                 "%s +%lu Lv%u>%u",
-                echo_species_name(e->mac),
+                name,
                 (unsigned long)b->fought_xp[i],
                 before,
                 e->level);
@@ -1799,7 +1819,7 @@ static void battle_results_build(App* app) {
                 line,
                 sizeof(line),
                 "%s +%lu XP",
-                echo_species_name(e->mac),
+                name,
                 (unsigned long)b->fought_xp[i]);
         result_add(app, line);
         for(uint16_t lv = (uint16_t)before + 1; lv <= e->level; lv++) {
@@ -1935,7 +1955,8 @@ static bool use_item_on(App* app, uint8_t item, Echoid* target) {
     Inventory* inv = &app->save.inv;
     EchoStats s;
     echo_stats(target, &s);
-    const char* name = echo_species_name(target->mac);
+    char name[ECHO_NAME_LEN];
+    echo_name(target->mac, name, sizeof(name));
     char msg[40];
     if(inv->items[item] == 0) {
         app_toast(app, "You have none");
@@ -2050,7 +2071,8 @@ static void team_open(App* app, uint8_t tab, uint32_t select) {
 /* Team member -> end of the PAC. */
 static void team_send_to_pac(App* app, uint8_t idx) {
     char msg[40];
-    const char* name = echo_species_name(app->save.team[idx].mac);
+    char name[ECHO_NAME_LEN];
+    echo_name(app->save.team[idx].mac, name, sizeof(name));
     if(app->save.team_count <= 1) {
         app_toast(app, "Team needs one echoid");
         return;
@@ -2090,7 +2112,9 @@ static void pac_send_to_team(App* app) {
     app->save.team[app->save.team_count++] = e;
     pac_invalidate(app);
     app_save(app);
-    snprintf(msg, sizeof(msg), "%s joined the team", echo_species_name(e.mac));
+    char name[ECHO_NAME_LEN];
+    echo_name(e.mac, name, sizeof(name));
+    snprintf(msg, sizeof(msg), "%s joined the team", name);
     team_open(app, 0, app->save.team_count - 1);
     app_toast(app, msg);
 }
@@ -2098,7 +2122,8 @@ static void pac_send_to_team(App* app) {
 static void detail_input(App* app, InputEvent* ev, bool press, int dy) {
     uint32_t pos, n;
     const Echoid* target = detail_target(app, &pos, &n);
-    const char* name = echo_species_name(target->mac);
+    char name[ECHO_NAME_LEN];
+    echo_name(target->mac, name, sizeof(name));
     char msg[40];
 
     if(app->detail_menu) {
@@ -2356,12 +2381,15 @@ static void handle_input(App* app, InputEvent* ev) {
                 pac_invalidate(app);
                 app_save(app);
                 char msg[40];
+                char in_name[ECHO_NAME_LEN], out_name[ECHO_NAME_LEN];
+                echo_name(in.mac, in_name, sizeof(in_name));
+                echo_name(out.mac, out_name, sizeof(out_name));
                 snprintf(
                     msg,
                     sizeof(msg),
                     "%s <> %s",
-                    echo_species_name(in.mac),
-                    echo_species_name(out.mac));
+                    in_name,
+                    out_name);
                 notification_message(app->notif, &sequence_success);
                 team_open(app, 0, app->swap_idx);
                 app_toast(app, msg);

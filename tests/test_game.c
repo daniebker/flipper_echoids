@@ -380,6 +380,45 @@ static void test_tonics(void) {
     CHECK(inventory_shard_total(&inv) == 0);
 }
 
+static void test_names(void) {
+    uint8_t mac[6] = {0x80, 0xE1, 0x26, 0xAA, 0xBB, 0xCC};
+    char a[ECHO_NAME_LEN], b[ECHO_NAME_LEN];
+    echo_name(mac, a, sizeof(a));
+    echo_name(mac, b, sizeof(b));
+    CHECK(strcmp(a, b) == 0); /* same MAC, same name */
+
+    int distinct = 0;
+    static char seen[600][ECHO_NAME_LEN];
+    for(uint32_t i = 0; i < 600; i++) {
+        uint8_t m[6] = {0x42, 0x13, (uint8_t)(i >> 8), (uint8_t)i, 0x99, 0x01};
+        char n[ECHO_NAME_LEN];
+        echo_name(m, n, sizeof(n));
+        size_t len = strlen(n);
+        CHECK(len >= ECHO_NAME_MIN && len <= ECHO_NAME_MAX);
+        CHECK(n[0] >= 'A' && n[0] <= 'Z');
+        for(size_t k = 1; k < len; k++)
+            CHECK(n[k] >= 'a' && n[k] <= 'z');
+        /* Never a straight copy of one of its type's source words */
+        EchoGenes g;
+        echo_genes(m, &g);
+        char low[ECHO_NAME_LEN];
+        strcpy(low, n);
+        low[0] = (char)(low[0] - 'A' + 'a');
+        for(const char* const* w = echo_name_corpus(g.type); *w; w++)
+            CHECK(strcmp(*w, low) != 0);
+        int dup = 0;
+        for(int k = 0; k < distinct && !dup; k++)
+            dup = strcmp(seen[k], n) == 0;
+        if(!dup) strcpy(seen[distinct++], n);
+    }
+    CHECK(distinct > 450); /* plenty of variety */
+
+    /* Small buffers are truncated safely */
+    char tiny[3];
+    echo_name(mac, tiny, sizeof(tiny));
+    CHECK(strlen(tiny) == 2);
+}
+
 static void test_type_chart(void) {
     CHECK(echo_type_mult(EchoTypeTide, EchoTypeEmber) == 200);
     CHECK(echo_type_mult(EchoTypeEmber, EchoTypeTide) == 50);
@@ -459,6 +498,7 @@ int main(void) {
     test_pac_recipe();
     test_moves();
     test_tonics();
+    test_names();
     if(failures) {
         printf("%d failure(s)\n", failures);
         return 1;

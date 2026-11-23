@@ -64,7 +64,7 @@ static void gen_types(void) {
            ECHO_TYPE_COUNT);
     printf("See also: [Types and Moves](Types-and-Moves.md) for every move and learnset.\n\n");
     printf("## Contents\n\n- [The type cycle](#the-type-cycle)\n- [The types](#the-types)\n"
-           "- [The type matchup chart](#the-type-matchup-chart)\n"
+           "- [Names](#names)\n- [The type matchup chart](#the-type-matchup-chart)\n"
            "- [Strengths and weaknesses by type](#strengths-and-weaknesses-by-type)\n"
            "- [Quick reference: what to use against each type](#quick-reference-what-to-use-against-each-type)\n"
            "- [Types and learning moves](#types-and-learning-moves)\n- [Battle tips](#battle-tips)\n"
@@ -96,6 +96,35 @@ static void gen_types(void) {
     printf("\nThe short name is what the Flipper's screens show (for example in the Collect list and the "
            "move picker). Each type has three species; rarer echoids are more likely to be the later, "
            "stronger-looking species.\n\n");
+
+    /* Names */
+    printf("## Names\n\n");
+    printf("Besides its species, every echoid has **its own name**, generated from its MAC address "
+           "by a Markov chain. The chain builds the name a letter at a time, choosing each letter "
+           "from what follows the previous two letters in a list of words themed after the echoid's "
+           "type. Names are %d to %d letters long and never just copy a word from the list. The same "
+           "MAC always gives the same name.\n\n", ECHO_NAME_MIN, ECHO_NAME_MAX);
+    printf("| Type | Source words (sample) | Example names |\n|---|---|---|\n");
+    for(uint8_t t = 0; t < ECHO_TYPE_COUNT; t++) {
+        printf("| **%s** | ", echo_type_name(t));
+        const char* const* corpus = echo_name_corpus(t);
+        for(int i = 0; i < 6 && corpus[i]; i++)
+            printf("%s%s", i ? ", " : "", corpus[i]);
+        printf(", … | ");
+        int shown = 0;
+        for(uint32_t i = 0; shown < 6; i++) {
+            uint8_t mac[6] = {0x4E, 0x41, (uint8_t)(i >> 16), (uint8_t)(i >> 8), (uint8_t)i, 0x4D};
+            EchoGenes g;
+            echo_genes(mac, &g);
+            if(g.type != t) continue;
+            char name[ECHO_NAME_LEN];
+            echo_name(mac, name, sizeof(name));
+            printf("%s%s", shown ? ", " : "", name);
+            shown++;
+        }
+        printf(" |\n");
+    }
+    printf("\n");
 
     /* Chart */
     printf("## The type matchup chart\n\n");

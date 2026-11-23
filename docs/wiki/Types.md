@@ -10,6 +10,7 @@ See also: [Types and Moves](Types-and-Moves.md) for every move and learnset.
 
 - [The type cycle](#the-type-cycle)
 - [The types](#the-types)
+- [Names](#names)
 - [The type matchup chart](#the-type-matchup-chart)
 - [Strengths and weaknesses by type](#strengths-and-weaknesses-by-type)
 - [Quick reference: what to use against each type](#quick-reference-what-to-use-against-each-type)
@@ -62,6 +63,21 @@ Because it's a single loop, every type has exactly **one type it beats**, **one 
 | **Void** | `VOI` | Shadow and emptiness. What's left between the signals. | Nullpup, Shadebit, Eclipson |
 
 The short name is what the Flipper's screens show (for example in the Collect list and the move picker). Each type has three species; rarer echoids are more likely to be the later, stronger-looking species.
+
+## Names
+
+Besides its species, every echoid has **its own name**, generated from its MAC address by a Markov chain. The chain builds the name a letter at a time, choosing each letter from what follows the previous two letters in a list of words themed after the echoid's type. Names are 4 to 9 letters long and never just copy a word from the list. The same MAC always gives the same name.
+
+| Type | Source words (sample) | Example names |
+|---|---|---|
+| **Tide** | marina, coral, brine, lagoon, nautil, ripple, … | Rizzlet, Pelagoo, Saline, Rippa, Sundristu, Kelago |
+| **Ember** | cinder, blaze, ashen, pyra, scorch, kindle, … | Vulfulfla, Caldemaze, Cindle, Torcalder, Flameashe, Smolamel |
+| **Flora** | fern, bramble, willow, thistle, sorrel, clover, … | Sorel, Acaurel, Verben, Sordal, Orclowaur, Bran |
+| **Stone** | granite, basalt, shale, flint, obsid, quarry, … | Mont, Oranith, Obble, Flomare, Ferrbble, Garroble |
+| **Spark** | volta, ampere, ion, tesla, arc, static, … | Plasmint, Quara, Famppar, Aradynamo, Volt, Kineutrad |
+| **Gale** | zephyr, sirocco, mistral, cirrus, gust, aeris, … | Aeriswind, Gustoft, Swiflo, Stral, Plural, Sist |
+| **Pulse** | echo, sonar, radar, beacon, hertz, chirp, … | Tona, Resodeson, Octatic, Cadal, Anteala, Rhade |
+| **Void** | umbra, nyx, shade, null, eclipse, noctis, … | Veneth, Dimurk, Glow, Erebra, Noctrebus, Vesia |
 
 ## The type matchup chart
 
