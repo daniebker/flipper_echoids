@@ -22,8 +22,17 @@ jobs:
           ./gen_wiki items > docs/wiki/Items-and-Crafting.md
           ./gen_wiki battles > docs/wiki/Battles.md
           git diff --exit-code docs/wiki/
+      - name: Upload docs
+        uses: actions/upload-artifact@v4
+        with:
+          name: echoids-docs
+          path: |
+            README.md
+            LICENSE
+            docs/wiki/
 
   build:
+    name: Flipper app (${{ matrix.sdk-channel }} firmware)
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -35,8 +44,22 @@ jobs:
         id: build-app
         with:
           sdk-channel: ${{ matrix.sdk-channel }}
-      - name: Upload app artifacts
+      - name: Collect the app
+        run: |
+          mkdir -p fap
+          cp "${{ steps.build-app.outputs.fap-dir }}"/*.fap fap/
+          ls -la fap
+      - name: Upload app
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ github.event.repository.name }}-${{ steps.build-app.outputs.suffix }}
-          path: ${{ steps.build-app.outputs.fap-artifacts }}
+          # e.g. echoids-flipper-release-f7-api-88.2-1.5.1
+          name: echoids-flipper-${{ matrix.sdk-channel }}-${{ steps.build-app.outputs.suffix }}
+          path: fap/
+      - name: Summary
+        run: |
+          {
+            echo "### Flipper app (${{ matrix.sdk-channel }} firmware channel)"
+            echo ""
+            echo "Artifact **echoids-flipper-${{ matrix.sdk-channel }}-${{ steps.build-app.outputs.suffix }}** contains \`echoids.fap\`."
+            echo "Built for firmware API ${{ steps.build-app.outputs.api-version }}. Copy it to \`/ext/apps/Games/\` on the SD card, or open it with qFlipper."
+          } >> "$GITHUB_STEP_SUMMARY"

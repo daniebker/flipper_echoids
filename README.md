@@ -61,6 +61,28 @@ cd android && ./gradlew assembleRelease
 The APK is written to `android/app/build/outputs/apk/release/app-release.apk`. It's signed with
 the standard debug key so it installs directly; use your own key before publishing it anywhere.
 
+## Downloads
+
+Every push builds everything in **GitHub Actions**. Open a workflow run and download from
+**Artifacts** at the bottom of the run's page, which also lists what each artifact contains.
+
+| Workflow | Artifact | Contents |
+|---|---|---|
+| **Build** | `echoids-flipper-release-…` | `echoids.fap` for release firmware |
+| **Build** | `echoids-flipper-dev-…` | `echoids.fap` for dev firmware |
+| **Build** | `echoids-docs` | README and wiki pages |
+| **Android** | `echoids-android-apk` | `echoids.apk` (install this) and `echoids-debug.apk` |
+
+Workflow artifacts expire after 90 days. For permanent downloads, publish a **release**:
+push a version tag, or run the **Release** workflow by hand with a tag name.
+
+```bash
+git tag v1.0.0 && git push origin v1.0.0
+```
+
+The Release workflow builds everything again and attaches it to a GitHub Release: both
+`.fap` files, `echoids-android.apk`, `echoids-docs.zip` and `SHA256SUMS.txt`.
+
 ## Hardware
 
 The Flipper Zero has no WiFi radio, and its stock firmware can't scan for Bluetooth

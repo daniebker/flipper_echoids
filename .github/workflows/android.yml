@@ -42,3 +42,17 @@ jobs:
         with:
           name: echoids-android-apk
           path: apk/
+      - name: Summary
+        run: |
+          {
+            echo "### Android app"
+            echo ""
+            echo "Artifact **echoids-android-apk** contains:"
+            echo ""
+            echo "| File | Size | |"
+            echo "|---|---|---|"
+            echo "| \`echoids.apk\` | $(du -h apk/echoids.apk | cut -f1) | Release build: install this one |"
+            echo "| \`echoids-debug.apk\` | $(du -h apk/echoids-debug.apk | cut -f1) | Debug build |"
+            echo ""
+            echo "Android 7.0 or newer. Allow installs from your browser or file manager, then allow Location and Nearby devices when the app asks."
+          } >> "$GITHUB_STEP_SUMMARY"
