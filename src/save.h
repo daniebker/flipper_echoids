@@ -4,7 +4,7 @@
 #include "scanner.h"
 
 #define SAVE_MAGIC   0x45434831u /* "ECH1" */
-#define SAVE_VERSION 2
+#define SAVE_VERSION 3
 #define SEEN_BT_MAX  256
 
 typedef struct {
@@ -22,9 +22,10 @@ typedef struct {
     Inventory inv;
 
     /* Hashes of Bluetooth MACs that already gave a shard. */
+    /* Hashes of Bluetooth devices that gave a shard (cooldown table). */
     uint32_t seen_bt[SEEN_BT_MAX];
     uint16_t seen_bt_count;
-    uint16_t seen_bt_pos;
+    uint16_t seen_bt_pos; /* unused since v3 */
 
     uint32_t captures;
     uint32_t wins;
@@ -39,10 +40,14 @@ typedef struct {
     uint8_t bt_cmd;
     uint8_t log_sd;
     uint8_t reserved2[9];
+
+    /* ---- version 3: when each seen_bt[] device last gave a shard (RTC seconds) ---- */
+    uint32_t seen_bt_time[SEEN_BT_MAX];
 } SaveData;
 
 /* Size of a version 1 save file: everything before the v2 fields. */
 #define SAVE_V1_SIZE (offsetof(SaveData, baud_idx))
+#define SAVE_V2_SIZE (offsetof(SaveData, seen_bt_time))
 
 /* Returns false if no (valid) save exists. */
 bool save_load(SaveData* data);

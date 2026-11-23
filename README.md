@@ -7,7 +7,8 @@ nearby WiFi access points and craft gear from shards that Bluetooth devices drop
   the creature's species, type, rarity, base stats and pixel sprite. The same MAC
   always gives the same echoid.
 - **Bluetooth devices drop shards.** A device's MAC decides the shard's element and tier,
-  so the same device always drops the same shard. Each device gives its shard once.
+  so the same device always drops the same shard. After a device drops its shard it
+  has to recharge before it drops it again (see [Shard cooldowns](#shard-cooldowns)).
 - **Shards are crafted** into Echo Balls and other items.
 - **Echo Balls catch echoids.** Weaken a wild echoid in battle, then throw a ball.
 - **Your first echoid is born from your own Flipper.** On first launch you get a level 1
@@ -88,6 +89,23 @@ Shards come in 8 elements (the same as the creature types) and three tiers:
 | Prism Ball | 1 Prismatic + 2 Bright | Catch rate ×2.5 |
 | Tonic | 2 Tide + 1 Flora (any tier) | Fully heals the echoid you choose, including a fainted one |
 | Echo Crystal | 5 shards of any kind | Gives the echoid you choose half a level of XP |
+
+### Shard cooldowns
+
+Once a Bluetooth device has dropped its shard, it won't drop it again until its
+cooldown has passed. Closing and reopening Collect, or the whole app, doesn't reset it.
+Rarer shards take longer to recharge:
+
+| Shard tier | Cooldown |
+|---|---|
+| Dull | 15 minutes |
+| Bright | 1 hour |
+| Prismatic | 4 hours |
+
+Cooldowns use the Flipper's clock and are stored in the save file. The app remembers
+the last 256 devices; when that list is full, the device collected longest ago is
+dropped from it. If the clock is set backwards, affected cooldowns start again rather
+than ending early.
 
 When a recipe accepts any element, the app uses shards from the element you have the
 most of. Cheaper tiers are used first.

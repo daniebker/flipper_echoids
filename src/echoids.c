@@ -146,26 +146,39 @@ static bool app_owns(App* app, const uint8_t mac[6]) {
 }
 
 static void app_new_game(App* app) {
-    /* Keep the board configuration when starting over. */
-    SaveData old = app->save;
-    bool keep = old.magic == SAVE_MAGIC;
-    memset(&app->save, 0, sizeof(app->save));
-    app->save.magic = SAVE_MAGIC;
-    app->save.version = SAVE_VERSION;
-    app->save.source = ScanSourceBoard;
-    app->save.uart = ScanUartUsart;
-    app->save.bt_enabled = 1;
+    /* Keep the board configuration when starting over. Only the settings are
+     * copied: the whole SaveData is too big for the app's stack. */
+    SaveData* sv = &app->save;
+    bool keep = sv->magic == SAVE_MAGIC;
+    uint8_t cfg[11] = {
+        sv->source,
+        sv->uart,
+        sv->bt_enabled,
+        sv->baud_idx,
+        sv->power,
+        sv->boot_idx,
+        sv->eol,
+        sv->wifi_cmd,
+        sv->bt_cmd,
+        sv->log_sd,
+        0};
+    memset(sv, 0, sizeof(*sv));
+    sv->magic = SAVE_MAGIC;
+    sv->version = SAVE_VERSION;
+    sv->source = ScanSourceBoard;
+    sv->uart = ScanUartUsart;
+    sv->bt_enabled = 1;
     if(keep) {
-        app->save.source = old.source;
-        app->save.uart = old.uart;
-        app->save.bt_enabled = old.bt_enabled;
-        app->save.baud_idx = old.baud_idx;
-        app->save.power = old.power;
-        app->save.boot_idx = old.boot_idx;
-        app->save.eol = old.eol;
-        app->save.wifi_cmd = old.wifi_cmd;
-        app->save.bt_cmd = old.bt_cmd;
-        app->save.log_sd = old.log_sd;
+        sv->source = cfg[0];
+        sv->uart = cfg[1];
+        sv->bt_enabled = cfg[2];
+        sv->baud_idx = cfg[3];
+        sv->power = cfg[4];
+        sv->boot_idx = cfg[5];
+        sv->eol = cfg[6];
+        sv->wifi_cmd = cfg[7];
+        sv->bt_cmd = cfg[8];
+        sv->log_sd = cfg[9];
     }
 
     /* The starter is born from this Flipper's own Bluetooth MAC. */
@@ -707,7 +720,9 @@ static const char* const help_lines[] = {
     "",
     "Bluetooth devices drop one",
     "shard each (MAC decides",
-    "element and tier).",
+    "element and tier). Then",
+    "they recharge: Dull 15m,",
+    "Bright 1h, Prismatic 4h.",
     "",
     "Craft Echo Balls from",
     "shards. Weaken a wild echoid",
@@ -1337,14 +1352,19 @@ static void handle_ap(App* app, const ScanEvent* ev) {
 static void handle_bt(App* app, const ScanEvent* ev) {
     SaveData* sv = &app->save;
     uint32_t h = echo_hash_mac(ev->mac);
-    for(uint16_t i = 0; i < sv->seen_bt_count; i++) {
-        if(sv->seen_bt[i] == h) return; /* each device gives its shard once */
-    }
-    sv->seen_bt[sv->seen_bt_pos] = h;
-    sv->seen_bt_pos = (sv->seen_bt_pos + 1) % SEEN_BT_MAX;
-    if(sv->seen_bt_count < SEEN_BT_MAX) sv->seen_bt_count++;
-
     Shard s = shard_from_mac(ev->mac);
+    /* Each device recharges before it drops its shard again; rarer shards take longer. */
+    if(!shard_claim(
+           sv->seen_bt,
+           sv->seen_bt_time,
+           &sv->seen_bt_count,
+           SEEN_BT_MAX,
+           h,
+           s.tier,
+           furi_hal_rtc_get_timestamp(),
+           NULL)) {
+        return;
+    }
     if(sv->inv.shards[s.type][s.tier] < 9999) sv->inv.shards[s.type][s.tier]++;
     sv->shards_found++;
     if(app->shards_this_run < UINT16_MAX) app->shards_this_run++;

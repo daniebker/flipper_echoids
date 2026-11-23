@@ -141,6 +141,24 @@ extern const Recipe recipes[];
 extern const size_t recipe_count;
 
 uint32_t inventory_shard_total(const Inventory* inv);
+
+/* ---------- Shard cooldowns ---------- */
+/* Seconds before the same Bluetooth device can drop its shard again. */
+uint32_t shard_cooldown_s(uint8_t tier);
+
+/* Cooldown table: parallel arrays of device hashes and the time (seconds,
+ * RTC) their shard was last collected. Returns true if the shard can be
+ * collected now (and records it). Otherwise returns false and, if
+ * remaining_s is given, stores the seconds left. */
+bool shard_claim(
+    uint32_t* hashes,
+    uint32_t* times,
+    uint16_t* count,
+    uint16_t max,
+    uint32_t hash,
+    uint8_t tier,
+    uint32_t now,
+    uint32_t* remaining_s);
 bool craft_can(const Inventory* inv, size_t recipe);
 bool craft_do(Inventory* inv, size_t recipe);
 

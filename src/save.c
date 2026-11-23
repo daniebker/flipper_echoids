@@ -1,6 +1,7 @@
 #include "save.h"
 
 #include <furi.h>
+#include <furi_hal_rtc.h>
 #include <storage/storage.h>
 #include <string.h>
 
@@ -22,9 +23,16 @@ bool save_load(SaveData* data) {
     if(data->magic == SAVE_MAGIC) {
         if(data->version == SAVE_VERSION && read == sizeof(SaveData)) {
             ok = true;
-        } else if(data->version == 1 && read >= SAVE_V1_SIZE) {
-            /* Upgrade: new board settings start at their zero defaults. */
-            memset((uint8_t*)data + SAVE_V1_SIZE, 0, sizeof(SaveData) - SAVE_V1_SIZE);
+        } else if(
+            (data->version == 1 && read >= SAVE_V1_SIZE) ||
+            (data->version == 2 && read >= SAVE_V2_SIZE)) {
+            /* Upgrade: fields added since start at their zero defaults. */
+            size_t keep = data->version == 1 ? SAVE_V1_SIZE : SAVE_V2_SIZE;
+            memset((uint8_t*)data + keep, 0, sizeof(SaveData) - keep);
+            /* Devices that already gave a shard start their cooldown now. */
+            uint32_t now = furi_hal_rtc_get_timestamp();
+            for(uint16_t i = 0; i < SEEN_BT_MAX; i++)
+                data->seen_bt_time[i] = now;
             data->version = SAVE_VERSION;
             ok = true;
         }

@@ -311,6 +311,59 @@ uint32_t inventory_shard_total(const Inventory* inv) {
     return total;
 }
 
+static const uint32_t shard_cooldowns[SHARD_TIER_COUNT] = {
+    15u * 60u, /* Dull: 15 minutes */
+    60u * 60u, /* Bright: 1 hour */
+    4u * 60u * 60u, /* Prismatic: 4 hours */
+};
+
+uint32_t shard_cooldown_s(uint8_t tier) {
+    return shard_cooldowns[tier % SHARD_TIER_COUNT];
+}
+
+bool shard_claim(
+    uint32_t* hashes,
+    uint32_t* times,
+    uint16_t* count,
+    uint16_t max,
+    uint32_t hash,
+    uint8_t tier,
+    uint32_t now,
+    uint32_t* remaining_s) {
+    uint32_t cooldown = shard_cooldown_s(tier);
+    if(remaining_s) *remaining_s = 0;
+
+    for(uint16_t i = 0; i < *count; i++) {
+        if(hashes[i] != hash) continue;
+        if(now < times[i]) {
+            /* Clock went backwards: restart the cooldown rather than unlock it. */
+            times[i] = now;
+            if(remaining_s) *remaining_s = cooldown;
+            return false;
+        }
+        uint32_t elapsed = now - times[i];
+        if(elapsed < cooldown) {
+            if(remaining_s) *remaining_s = cooldown - elapsed;
+            return false;
+        }
+        times[i] = now;
+        return true;
+    }
+
+    /* New device: use a free slot, else the entry collected longest ago. */
+    uint16_t slot;
+    if(*count < max) {
+        slot = (*count)++;
+    } else {
+        slot = 0;
+        for(uint16_t i = 1; i < max; i++)
+            if(times[i] < times[slot]) slot = i;
+    }
+    hashes[slot] = hash;
+    times[slot] = now;
+    return true;
+}
+
 /* Take n shards of a tier from whichever element has the most. */
 static bool take_tier(Inventory* inv, uint8_t tier, uint8_t n) {
     while(n--) {

@@ -146,6 +146,44 @@ static void test_progression_and_battle(void) {
     CHECK(lv.level == MAX_LEVEL);
 }
 
+static void test_shard_cooldown(void) {
+    uint32_t hashes[4] = {0}, times[4] = {0}, left = 0;
+    uint16_t count = 0;
+    CHECK(shard_cooldown_s(ShardDull) < shard_cooldown_s(ShardBright));
+    CHECK(shard_cooldown_s(ShardBright) < shard_cooldown_s(ShardPrismatic));
+
+    uint32_t t = 1000000;
+    CHECK(shard_claim(hashes, times, &count, 4, 0xAA, ShardDull, t, NULL));
+    CHECK(count == 1);
+    /* Same device again before the cooldown: refused, remaining time reported */
+    CHECK(!shard_claim(hashes, times, &count, 4, 0xAA, ShardDull, t + 60, &left));
+    CHECK(left == shard_cooldown_s(ShardDull) - 60);
+    /* After the cooldown it can be collected again */
+    CHECK(shard_claim(hashes, times, &count, 4, 0xAA, ShardDull, t + shard_cooldown_s(ShardDull), NULL));
+    CHECK(count == 1);
+
+    /* A prismatic shard is still recharging when a dull one would be ready */
+    CHECK(shard_claim(hashes, times, &count, 4, 0xBB, ShardPrismatic, t, NULL));
+    CHECK(!shard_claim(hashes, times, &count, 4, 0xBB, ShardPrismatic, t + shard_cooldown_s(ShardDull), NULL));
+
+    /* Clock going backwards restarts the cooldown instead of unlocking it */
+    CHECK(!shard_claim(hashes, times, &count, 4, 0xBB, ShardPrismatic, t - 10, NULL));
+    CHECK(!shard_claim(hashes, times, &count, 4, 0xBB, ShardPrismatic, t + 5, NULL));
+
+    /* Full table: the entry collected longest ago is replaced */
+    CHECK(shard_claim(hashes, times, &count, 4, 0xCC, ShardDull, t + 2000, NULL));
+    CHECK(shard_claim(hashes, times, &count, 4, 0xDD, ShardDull, t + 2001, NULL));
+    CHECK(count == 4);
+    CHECK(shard_claim(hashes, times, &count, 4, 0xEE, ShardDull, t + 2002, NULL));
+    CHECK(count == 4);
+    int found_ee = 0, found_bb = 0;
+    for(int i = 0; i < 4; i++) {
+        found_ee += hashes[i] == 0xEE;
+        found_bb += hashes[i] == 0xBB;
+    }
+    CHECK(found_ee == 1 && found_bb == 0); /* 0xBB (time t-10) was the oldest */
+}
+
 static void test_type_chart(void) {
     CHECK(echo_type_mult(EchoTypeTide, EchoTypeEmber) == 200);
     CHECK(echo_type_mult(EchoTypeEmber, EchoTypeTide) == 50);
@@ -219,6 +257,7 @@ int main(void) {
     test_crafting();
     test_progression_and_battle();
     test_type_chart();
+    test_shard_cooldown();
     if(failures) {
         printf("%d failure(s)\n", failures);
         return 1;
