@@ -228,6 +228,10 @@ const char* echo_type_name(uint8_t type) {
 const char* echo_type_short(uint8_t type) {
     return type_short[type % ECHO_TYPE_COUNT];
 }
+char echo_rarity_letter(uint8_t rarity) {
+    return "CUREL"[rarity % RarityCount];
+}
+
 const char* echo_rarity_name(uint8_t rarity) {
     return rarity_names[rarity % RarityCount];
 }

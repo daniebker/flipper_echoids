@@ -127,6 +127,8 @@ const char* const* echo_name_corpus(uint8_t type);
 const char* echo_type_name(uint8_t type);
 const char* echo_type_short(uint8_t type);
 const char* echo_rarity_name(uint8_t rarity);
+/* One letter for compact lists: C, U, R, E, L. */
+char echo_rarity_letter(uint8_t rarity);
 /* ---------- Moves ---------- */
 #define MAX_MOVES    4 /* moves an echoid can use at once */
 #define MOVE_NEUTRAL ECHO_TYPE_COUNT /* Move.type for untyped moves */

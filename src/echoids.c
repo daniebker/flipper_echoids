@@ -325,6 +325,14 @@ static void draw_sprite(Canvas* canvas, const uint8_t mac[6], int x, int y, int 
     }
 }
 
+/* Rarity badge: a letter (C U R E L); Epic and Legendary get a box so they
+ * stand out. y is the text baseline; uses the current color. */
+static void draw_rarity(Canvas* canvas, int x, int y, uint8_t rarity) {
+    char s[2] = {echo_rarity_letter(rarity), '\0'};
+    canvas_draw_str(canvas, x, y, s);
+    if(rarity >= RarityEpic) canvas_draw_frame(canvas, x - 2, y - 8, 9, 10);
+}
+
 static void draw_hp_bar(Canvas* canvas, int x, int y, int w, uint16_t hp, uint16_t max) {
     canvas_draw_frame(canvas, x, y, w, 5);
     int fill = max ? (int)((uint32_t)(w - 2) * hp / max) : 0;
@@ -570,6 +578,7 @@ static void draw_collect(App* app, Canvas* canvas) {
         snprintf(buf, sizeof(buf), "L%u", echo_wild_level(n->mac, app_lead(app)->level));
         canvas_draw_str(canvas, 58, y, buf);
         canvas_draw_str(canvas, 76, y, echo_type_short(g.type));
+        draw_rarity(canvas, 95, y, g.rarity);
         snprintf(buf, sizeof(buf), "%d", n->rssi);
         canvas_draw_str_aligned(canvas, 121, y, AlignRight, AlignBottom, buf);
     }
@@ -618,7 +627,13 @@ static void draw_battle(App* app, Canvas* canvas) {
     canvas_draw_str(canvas, 0, 8, buf);
     EchoGenes gw;
     echo_genes(b->wild.mac, &gw);
-    snprintf(buf, sizeof(buf), "%s %s", echo_species_name(b->wild.mac), echo_type_short(gw.type));
+    snprintf(
+        buf,
+        sizeof(buf),
+        "%s %s %c",
+        echo_species_name(b->wild.mac),
+        echo_type_short(gw.type),
+        echo_rarity_letter(gw.rarity));
     canvas_draw_str(canvas, 0, 17, buf);
     draw_hp_bar(canvas, 0, 19, 60, b->wild.hp, sw.max_hp);
     draw_sprite(canvas, b->wild.mac, 94, 0, 2);
@@ -755,12 +770,13 @@ static void draw_roster(
         snprintf(buf, sizeof(buf), "L%u", e->level);
         canvas_draw_str(canvas, 62, y, buf);
         canvas_draw_str(canvas, 80, y, echo_type_short(g.type));
+        draw_rarity(canvas, 96, y, g.rarity);
         canvas_draw_str_aligned(canvas, 121, y, AlignRight, AlignBottom, e->hp ? "" : "KO");
         if(e->hp) {
             /* tiny hp bar */
-            int fill = (int)(16u * e->hp / (s.max_hp ? s.max_hp : 1));
-            canvas_draw_frame(canvas, 102, y - 6, 18, 5);
-            if(fill > 0) canvas_draw_box(canvas, 103, y - 5, fill, 3);
+            int fill = (int)(14u * e->hp / (s.max_hp ? s.max_hp : 1));
+            canvas_draw_frame(canvas, 104, y - 6, 16, 5);
+            if(fill > 0) canvas_draw_box(canvas, 105, y - 5, fill, 3);
         }
     }
     canvas_set_color(canvas, ColorBlack);
@@ -1100,6 +1116,9 @@ static const char* const help_lines[] = {
     "Fainted echoids don't heal:",
     "use a Revive Crystal first.",
     "* owned  x already fought",
+    "Rarity: C common, U uncom-",
+    "mon, R rare, [E] epic,",
+    "[L] legendary.",
     "Top right: echoids spotted",
     "(ball) and shards found",
     "(diamond) since app start.",
