@@ -265,15 +265,19 @@ static void draw_title(Canvas* canvas, const char* title, const char* right) {
     canvas_set_font(canvas, FontSecondary);
 }
 
-static void draw_row(Canvas* canvas, int y, bool selected) {
-    /* y is the text baseline */
+/* Highlight bar for a list row; y is the text baseline, width in pixels. */
+static void draw_row_w(Canvas* canvas, int y, bool selected, int width) {
     if(selected) {
         canvas_set_color(canvas, ColorBlack);
-        canvas_draw_box(canvas, 0, y - 8, 123, 10);
+        canvas_draw_box(canvas, 0, y - 8, width, 10);
         canvas_set_color(canvas, ColorWhite);
     } else {
         canvas_set_color(canvas, ColorBlack);
     }
+}
+
+static void draw_row(Canvas* canvas, int y, bool selected) {
+    draw_row_w(canvas, y, selected, 123); /* leave room for the scrollbar */
 }
 
 static void draw_toast(App* app, Canvas* canvas) {
@@ -317,7 +321,8 @@ static void draw_menu(App* app, Canvas* canvas) {
     draw_title(canvas, "Echoids", NULL);
     for(size_t i = 0; i < MENU_COUNT; i++) {
         int y = 23 + (int)i * 10;
-        draw_row(canvas, y, i == app->menu_idx);
+        /* Stop short of the lead echoid panel (divider at x=84). */
+        draw_row_w(canvas, y, i == app->menu_idx, 83);
         canvas_draw_str(canvas, 4, y, menu_items[i]);
     }
     canvas_set_color(canvas, ColorBlack);
