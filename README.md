@@ -18,6 +18,49 @@ nearby WiFi access points and craft gear from shards that Bluetooth devices drop
 - Your echoids **level up** (to a maximum of **100**) when they win battles and catch other
   echoids, and **learn new moves** as they go.
 
+## Android
+
+Echoids also runs on **Android phones**, with all the same features. The app runs the
+game's own code, so everything works exactly as on the Flipper: battles, moves, catching,
+crafting, the PAC, time of day, star ratings, names and the rest. It shows the Flipper's
+128×64 screen scaled up in Flipper orange, with a D-pad, OK and Back buttons underneath.
+
+- **No extra hardware:** the phone's own WiFi and Bluetooth radios find echoids and shards,
+  so you don't need an ESP32 board. The same access point gives the same echoid as on a
+  Flipper.
+- **Permissions:** the first time, allow **Location** and **Nearby devices**. Android only
+  reveals nearby WiFi and Bluetooth devices to apps with these. Location, WiFi and Bluetooth
+  must be switched on. If one is missing, Collect says which.
+- **Scan setup:** under **Settings → Scan setup** you choose **Phone radios** or **Demo**,
+  and whether to scan Bluetooth. The Flipper's UART, 5V and terminal options don't apply.
+- **Controls:** tap a button for a press. Hold it to repeat, like the Flipper's long press.
+  The phone's Back gesture or button is the Flipper's Back button, and Back on the main menu
+  closes the app.
+- **Android limits:** Android allows only a few WiFi scans every couple of minutes, so new
+  access points can take up to about 30 seconds to appear. Many phones and headphones
+  change their Bluetooth MAC address now and then, and each new address counts as a new
+  device.
+- **Your starter:** your first echoid is created from a stable ID for your phone, because
+  Android doesn't let apps read the Bluetooth MAC.
+- **Saving:** progress is saved in the app's own storage, separately from any Flipper, and
+  also when you switch away from the app.
+
+### Getting the APK
+
+GitHub Actions builds the APK on every push (workflow **Android**). Open a run, download the
+**echoids-android-apk** artifact, and install `echoids.apk` on your phone. You'll need to allow
+installing apps from your browser or file manager. The APK runs on Android 7.0 and newer,
+on ARM phones and x86_64 emulators.
+
+To build it yourself, you need the Android SDK and NDK (Android Studio installs both):
+
+```bash
+cd android && ./gradlew assembleRelease
+```
+
+The APK is written to `android/app/build/outputs/apk/release/app-release.apk`. It's signed with
+the standard debug key so it installs directly; use your own key before publishing it anywhere.
+
 ## Hardware
 
 The Flipper Zero has no WiFi radio, and its stock firmware can't scan for Bluetooth
@@ -363,6 +406,9 @@ src/scanner_parse.c    Marauder / CSV line parser (no SDK)
 src/save.[ch]          Save file (team, items, settings) and upgrades from old versions
 src/pac_store.[ch]     PAC storage file on the SD card (unlimited stored echoids)
 tests/test_game.c      Host-side unit tests
+android/               Android app: Java UI and radios (app/src/main/java), the JNI bridge
+                       and a small Flipper SDK shim (app/src/main/cpp) around the same src/
+android/tests/smoke.c  Runs the game on the shim on a PC and checks every main screen
 tools/gen_wiki.c       Generates the wiki pages from the game tables
 docs/wiki/             Wiki: Home, Echoids, Types, Types and Moves, Battles, Items and Crafting
 ```

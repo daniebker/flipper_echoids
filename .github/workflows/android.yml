@@ -1,0 +1,44 @@
+name: Android
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  native-smoke-test:
+    name: Native smoke test (PC)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the game on the Flipper shim
+        run: |
+          C=android/app/src/main/cpp
+          gcc -std=gnu11 -O1 -g -fsanitize=address,undefined -Wall -Wextra -Wno-unused-parameter \
+            -Wno-format-truncation -DECHOIDS_PHONE -I$C/shim -I$C -Isrc \
+            src/game.c src/echoids.c src/save.c src/pac_store.c src/scanner_parse.c \
+            $C/scanner_phone.c $C/shim/shim_core.c $C/shim/shim_gui.c android/tests/smoke.c \
+            -lpthread -o smoke
+          ./smoke
+
+  apk:
+    name: Build APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build debug and release APKs
+        working-directory: android
+        run: ./gradlew --no-daemon assembleDebug assembleRelease
+      - name: Collect APKs
+        run: |
+          mkdir -p apk
+          cp android/app/build/outputs/apk/release/app-release.apk apk/echoids.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk apk/echoids-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: echoids-android-apk
+          path: apk/

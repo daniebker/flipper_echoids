@@ -18,6 +18,19 @@
 
 #include "game.h"
 #include "pac_store.h"
+
+/* ECHOIDS_PHONE: built for the Android app (phone radios instead of an ESP32
+ * board, saves when the phone app is paused). Everything else is identical. */
+#ifdef ECHOIDS_PHONE
+#define SOURCE_LABEL       "Phone radios"
+#define SOURCE_LABEL_SHORT "Phone"
+#define BOARD_TITLE        "Scan setup"
+extern volatile int echoids_save_request;
+#else
+#define SOURCE_LABEL       "ESP32 board"
+#define SOURCE_LABEL_SHORT "ESP32"
+#define BOARD_TITLE        "Board setup"
+#endif
 #include "save.h"
 #include "scanner.h"
 
@@ -533,6 +546,17 @@ static void draw_collect(App* app, Canvas* canvas) {
             canvas_draw_str_aligned(canvas, 64, 40, AlignCenter, AlignCenter, "Come back at another hour!");
         } else if(app->save.source == ScanSourceDemo) {
             canvas_draw_str_aligned(canvas, 64, 32, AlignCenter, AlignCenter, "Listening for echoes...");
+#ifdef ECHOIDS_PHONE
+        } else if(true) {
+            ScanStats st;
+            scanner_get_stats(app->scanner, &st);
+            char info[40];
+            canvas_draw_str_aligned(canvas, 64, 24, AlignCenter, AlignCenter, "Scanning WiFi + Bluetooth...");
+            snprintf(
+                info, sizeof(info), "WiFi %lu  BT %lu", (unsigned long)st.aps, (unsigned long)st.bts);
+            canvas_draw_str_aligned(canvas, 64, 36, AlignCenter, AlignCenter, info);
+            canvas_draw_str_aligned(canvas, 64, 48, AlignCenter, AlignCenter, "Walk around to find echoids");
+#endif
         } else {
             /* Explain exactly what the board is (not) doing. */
             ScanStats st;
@@ -791,13 +815,13 @@ static void draw_roster(
         snprintf(buf, sizeof(buf), "L%u", e->level);
         canvas_draw_str(canvas, 62, y, buf);
         canvas_draw_str(canvas, 80, y, echo_type_short(g.type));
-        draw_rarity(canvas, 96, y, g.rarity);
+        draw_rarity(canvas, 98, y, g.rarity);
         canvas_draw_str_aligned(canvas, 121, y, AlignRight, AlignBottom, e->hp ? "" : "KO");
         if(e->hp) {
             /* tiny hp bar */
-            int fill = (int)(14u * e->hp / (s.max_hp ? s.max_hp : 1));
-            canvas_draw_frame(canvas, 104, y - 6, 16, 5);
-            if(fill > 0) canvas_draw_box(canvas, 105, y - 5, fill, 3);
+            int fill = (int)(12u * e->hp / (s.max_hp ? s.max_hp : 1));
+            canvas_draw_frame(canvas, 106, y - 6, 14, 5);
+            if(fill > 0) canvas_draw_box(canvas, 107, y - 5, fill, 3);
         }
     }
     canvas_set_color(canvas, ColorBlack);
@@ -1090,8 +1114,8 @@ static void draw_settings(App* app, Canvas* canvas) {
     snprintf(
         l0,
         sizeof(l0),
-        "Board setup (%s)",
-        app->save.source == ScanSourceDemo ? "Demo" : "ESP32");
+        BOARD_TITLE " (%s)",
+        app->save.source == ScanSourceDemo ? "Demo" : SOURCE_LABEL_SHORT);
     const char* lines[SETTINGS_COUNT] = {
         l0,
         "How to play",
@@ -1108,8 +1132,12 @@ static void draw_settings(App* app, Canvas* canvas) {
 static const char* const help_lines[] = {
     "HOW TO PLAY",
     "Collect: scans WiFi + BT",
+#ifdef ECHOIDS_PHONE
+    "with your phone's radios.",
+#else
     "via an ESP32 board running",
     "Marauder on the GPIO pins.",
+#endif
     "",
     "WiFi access points are wild",
     "echoids. The MAC decides",
@@ -1167,6 +1195,12 @@ static const char* const help_lines[] = {
     "(ball) and shards found",
     "(diamond) since app start.",
     "",
+#ifdef ECHOIDS_PHONE
+    "NOTHING FOUND?",
+    "Allow Location and Nearby",
+    "devices, and turn on WiFi,",
+    "Bluetooth and Location.",
+#else
     "BOARD NOT WORKING?",
     "Settings > Board setup >",
     "Terminal shows raw UART.",
@@ -1174,6 +1208,7 @@ static const char* const help_lines[] = {
     "UART pins / baud live.",
     "Auto-calibrate tries all.",
     "Wire board TX->Flipper RX.",
+#endif
 };
 #define HELP_COUNT (sizeof(help_lines) / sizeof(help_lines[0]))
 #define HELP_ROWS  6
@@ -1323,7 +1358,7 @@ static void board_row_text(App* app, uint8_t row, char* buf, size_t len) {
     SaveData* sv = &app->save;
     switch(row) {
     case BoardSource:
-        snprintf(buf, len, "Source: %s", sv->source == ScanSourceDemo ? "Demo" : "ESP32 board");
+        snprintf(buf, len, "Source: %s", sv->source == ScanSourceDemo ? "Demo" : SOURCE_LABEL);
         break;
     case BoardUart:
         snprintf(buf, len, "Pins: %s", scanner_uart_name(sv->uart % ScanUartCount));
@@ -1412,19 +1447,43 @@ static void board_change(App* app, uint8_t row, int delta) {
     app->dirty = true;
 }
 
+/* The rows shown: a phone has no UART, 5V pin or Marauder, just the source
+ * and whether to scan Bluetooth. */
+static const uint8_t board_rows[] = {
+#ifdef ECHOIDS_PHONE
+    BoardSource,
+    BoardBt,
+#else
+    BoardSource,
+    BoardUart,
+    BoardBaud,
+    BoardPower,
+    BoardBoot,
+    BoardEol,
+    BoardWifiCmd,
+    BoardBtCmd,
+    BoardBt,
+    BoardLog,
+    BoardTerminal,
+    BoardCalibrate,
+#endif
+};
+#define BOARD_ROW_COUNT ((uint8_t)(sizeof(board_rows) / sizeof(board_rows[0])))
+
 static void draw_board(App* app, Canvas* canvas) {
-    draw_title(canvas, "Board setup", "<> change");
+    draw_title(canvas, BOARD_TITLE, "<> change");
     char buf[32];
     for(uint8_t r = 0; r < BOARD_ROWS; r++) {
         uint8_t i = app->board_scroll + r;
-        if(i >= BoardCount) break;
+        if(i >= BOARD_ROW_COUNT) break;
         int y = 22 + r * 10;
         draw_row(canvas, y, i == app->board_idx);
-        board_row_text(app, i, buf, sizeof(buf));
+        board_row_text(app, board_rows[i], buf, sizeof(buf));
         canvas_draw_str(canvas, 3, y, buf);
     }
     canvas_set_color(canvas, ColorBlack);
-    elements_scrollbar_pos(canvas, 127, 14, 48, app->board_idx, BoardCount);
+    if(BOARD_ROW_COUNT > BOARD_ROWS)
+        elements_scrollbar_pos(canvas, 127, 14, 48, app->board_idx, BOARD_ROW_COUNT);
     draw_toast(app, canvas);
 }
 
@@ -1702,12 +1761,14 @@ static void draw_calibrate(App* app, Canvas* canvas) {
 }
 
 static void board_input(App* app, InputEvent* ev, bool press, int dy) {
+    if(app->board_idx >= BOARD_ROW_COUNT) app->board_idx = 0;
+    uint8_t row = board_rows[app->board_idx];
     if(dy) {
-        list_move(&app->board_idx, &app->board_scroll, BoardCount, BOARD_ROWS, dy);
+        list_move(&app->board_idx, &app->board_scroll, BOARD_ROW_COUNT, BOARD_ROWS, dy);
     } else if(press && (ev->key == InputKeyLeft || ev->key == InputKeyRight)) {
-        board_change(app, app->board_idx, ev->key == InputKeyLeft ? -1 : 1);
+        board_change(app, row, ev->key == InputKeyLeft ? -1 : 1);
     } else if(press && ev->key == InputKeyOk) {
-        if(app->board_idx == BoardTerminal) {
+        if(row == BoardTerminal) {
             if(app->save.source == ScanSourceDemo) {
                 app_toast(app, "Set Source to ESP32 first");
             } else {
@@ -1715,11 +1776,11 @@ static void board_input(App* app, InputEvent* ev, bool press, int dy) {
                 terminal_open(app);
                 app->screen = ScreenTerminal;
             }
-        } else if(app->board_idx == BoardCalibrate) {
+        } else if(row == BoardCalibrate) {
             calibrate_start(app);
             app->screen = ScreenCalibrate;
         } else {
-            board_change(app, app->board_idx, 1);
+            board_change(app, row, 1);
         }
     } else if(press && ev->key == InputKeyBack) {
         app->screen = ScreenSettings;
@@ -2670,6 +2731,14 @@ static void handle_input(App* app, InputEvent* ev) {
 
 static void app_tick(App* app) {
     uint32_t now = furi_get_tick();
+
+#ifdef ECHOIDS_PHONE
+    /* The phone app is going to the background: save now. */
+    if(echoids_save_request) {
+        echoids_save_request = 0;
+        app_save(app);
+    }
+#endif
 
     /* A new hour brings different echoids (wait until any battle is over). */
     app->hour = app_hour();
