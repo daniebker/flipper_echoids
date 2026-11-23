@@ -228,6 +228,9 @@ typedef struct {
 void battle_start(Battle* b, Echoid* mine, const uint8_t mac[6], uint8_t level, const char* ssid);
 /* Player uses the move in slot (0..echo_moves()-1); the wild echoid answers. */
 void battle_attack(Battle* b, uint8_t slot);
+/* Sends in another echoid. A chosen switch costs the turn (the wild echoid
+ * attacks the newcomer); replacing a fainted echoid does not. */
+void battle_switch(Battle* b, Echoid* next, bool costs_turn);
 /* Returns false if the player has no ball of that kind. */
 bool battle_throw(Battle* b, Inventory* inv, uint8_t ball);
 void battle_flee(Battle* b);

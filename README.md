@@ -66,7 +66,7 @@ from a fixed pool of fake devices, so you can play and test without hardware.
 | Screen | Controls |
 |---|---|
 | **Collect** | Starts scanning. The top right shows how many echoids you've spotted (ball icon) and how many shards you've collected (diamond icon) since opening the app. Nearby access points are listed as echoids, showing species, level, type and signal strength. The panel at the bottom shows the selected echoid's rarity, type and stats (HP, ATK, DEF, SPD) at the level it would battle at. `*` = already caught (in your team or PAC), `x` = already fought this session. **OK** battles the selected echoid. **Back** stops scanning. Bluetooth shards are collected automatically and shown in a popup. |
-| **Battle** | **←/→** choose **Hit**, **Ball** or **Run**, and **OK** confirms. **Hit** opens your lead's moves (up to 4): **↑/↓** picks one and **OK** uses it. Each row shows the move's name, `x2` / `x.5` if the type matchup helps or hurts against this wild echoid, its type (`---` = untyped) and its power. **Ball** opens the throw menu, which shows each ball's catch chance. **Run** tries to escape. |
+| **Battle** | **←/→** choose **Hit**, **Swap**, **Ball** or **Run**, and **OK** confirms. **Hit** opens the fighting echoid's moves (up to 4): **↑/↓** picks one and **OK** uses it. Each row shows the move's name, `x2` / `x.5` if the type matchup helps or hurts against this wild echoid, the move's type and its power. **Swap** sends in another team member (`>` marks the one fighting). Switching uses your turn, so the wild echoid gets an attack on the newcomer. If your echoid faints and anyone on your team can still fight, you pick who goes next instead of losing; the battle is only lost when the whole team has fainted. A battle starts with your lead, or with the first healthy team member if the lead has fainted. XP goes to whichever echoid finishes the battle. **Ball** opens the throw menu, which shows each ball's catch chance. **Run** tries to escape. |
 | **Team** | Two tabs, switched with **←/→**: **Team** (up to 6 echoids you carry) and **PAC** (Cold PAC Storage for the rest). **OK** opens an echoid's details, where **←/→** browses and **OK** opens its actions. For a team member: **Set as lead** (the echoid that fights) or **Send to PAC**. For a PAC echoid: **Move to team**. If the team is full, you pick which team member to swap out. The team always keeps at least one echoid. |
 | **PAC** | Opens **Cold PAC Storage** straight away: browse every echoid you've stored with **↑/↓**, and press **OK** for its details and **Move to team**. The main menu shows how many echoids are stored. It's the same screen as Team's PAC tab, so **←/→** switches to the team. |
 | **Craft** | `+` marks recipes you can afford. **OK** crafts one. |
@@ -75,8 +75,7 @@ from a fixed pool of fake devices, so you can play and test without hardware.
 
 ### Types
 
-Typed moves do 2× damage to the next type in the cycle and ½ damage to the type before it
-(untyped moves always do normal damage):
+Moves do 2× damage to the next type in the cycle and ½ damage to the type before it:
 
 `Tide → Ember → Flora → Stone → Spark → Gale → Pulse → Void → Tide`
 
@@ -139,26 +138,34 @@ most of. Cheaper tiers are used first.
 
 ### Moves
 
+Every move has a type, and the [type chart](#types) applies to all of them: a move does
+2× damage to the type it beats and ½ damage to the type that beats it.
+
 Every echoid learns moves as it levels up and can use its **4 most recently learned** moves.
-Each new move is stronger, so when a fifth is learned the oldest one is forgotten. Each type
-has six moves of its own, and every echoid also learns three untyped moves:
+Later moves are stronger, so when a fifth is learned the oldest one is forgotten. Most moves
+are of the echoid's own type. Two are **coverage moves** of other types:
+
+- a **counter move**, of the type that beats whatever beats this echoid. For example, Tide
+  is beaten by Void, and Void is beaten by Pulse, so Tide echoids learn Pulse moves;
+- a **species move**, whose type depends on the species, so two echoids of the same type
+  can cover different weaknesses.
 
 | Level | Move learned | Power / accuracy |
 |---|---|---|
-| 1 | Strike (untyped) | 40 / 100% |
-| 1 | 1st type move (e.g. Splash Jab, Zap, Ping) | 45 / 100% |
-| 8 | 2nd type move | 55 / 95% |
-| 16 | Rush (untyped) | 65 / 90% |
-| 25 | 3rd type move (e.g. Tidal Lash, Arc Bolt) | 70 / 90% |
-| 38 | 4th type move | 85 / 85% |
-| 52 | 5th type move | 100 / 85% |
-| 66 | Echo Burst (untyped) | 95 / 80% |
-| 82 | 6th type move (e.g. Tsunami, Megavolt, Event Horizon) | 120 / 75% |
+| 1 | 1st own-type move (e.g. Splash Jab, Zap, Ping) | 45 / 100% |
+| 1 | 1st counter move | 45 / 100% |
+| 8 | 2nd own-type move | 55 / 95% |
+| 16 | Species move | 70 / 90% |
+| 25 | 3rd own-type move (e.g. Tidal Lash, Arc Bolt) | 70 / 90% |
+| 38 | 4th own-type move | 85 / 85% |
+| 52 | Strong counter move | 100 / 85% |
+| 66 | 5th own-type move | 100 / 85% |
+| 82 | Final own-type move (e.g. Tsunami, Megavolt, Event Horizon) | 120 / 75% |
 
 The battle log shows `Learned …!` when a level-up teaches a move. An Echo Crystal can teach
 one too. On an echoid's details screen, **↑/↓** switches to its **Moves** page, which lists its
 current moves and the next one it will learn. Wild echoids use moves the same way, and they
-usually pick the one that hurts your lead most.
+usually pick the one that hurts your echoid most.
 
 ### Catching and levelling
 

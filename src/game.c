@@ -105,35 +105,47 @@ static const Move typed_moves[ECHO_TYPE_COUNT][TYPED_MOVES] = {
      {"Event Horizon", EchoTypeVoid, 120, 75}},
 };
 
-/* Untyped moves every echoid learns. */
-static const Move neutral_moves[3] = {
-    {"Strike", MOVE_NEUTRAL, 40, 100},
-    {"Rush", MOVE_NEUTRAL, 65, 90},
-    {"Echo Burst", MOVE_NEUTRAL, 95, 80},
-};
+/* Where a learned move comes from: the echoid's own type, or a coverage type. */
+typedef enum {
+    LearnOwn, /* own type */
+    LearnCounter, /* the type that beats whatever beats this echoid */
+    LearnSpecies, /* a type that depends on the species */
+} LearnFrom;
 
-/* When moves are learned: level, then typed move index or -(neutral index + 1). */
 typedef struct {
     uint8_t level;
-    int8_t move;
+    uint8_t from; /* LearnFrom */
+    uint8_t move; /* index into that type's six moves */
 } LearnStep;
 
 static const LearnStep learnset[] = {
-    {1, -1}, /* Strike */
-    {1, 0},
-    {8, 1},
-    {16, -2}, /* Rush */
-    {25, 2},
-    {38, 3},
-    {52, 4},
-    {66, -3}, /* Echo Burst */
-    {82, 5},
+    {1, LearnOwn, 0},
+    {1, LearnCounter, 0},
+    {8, LearnOwn, 1},
+    {16, LearnSpecies, 2},
+    {25, LearnOwn, 2},
+    {38, LearnOwn, 3},
+    {52, LearnCounter, 4},
+    {66, LearnOwn, 4},
+    {82, LearnOwn, 5},
 };
 #define LEARNSET_LEN (sizeof(learnset) / sizeof(learnset[0]))
 
-static const Move* learn_step_move(uint8_t type, const LearnStep* st) {
-    if(st->move < 0) return &neutral_moves[-st->move - 1];
-    return &typed_moves[type % ECHO_TYPE_COUNT][st->move];
+/* Type t is beaten by t-1 (in the cycle), which is beaten by t-2. */
+static uint8_t counter_type(uint8_t type) {
+    return (uint8_t)((type + ECHO_TYPE_COUNT - 2) % ECHO_TYPE_COUNT);
+}
+
+/* Species 0..2 of a type learn a move of type t+3, t+4 or t+5. */
+static uint8_t species_type(const EchoGenes* g) {
+    return (uint8_t)((g->type + 3 + g->species) % ECHO_TYPE_COUNT);
+}
+
+static const Move* learn_step_move(const EchoGenes* g, const LearnStep* st) {
+    uint8_t t = g->type;
+    if(st->from == LearnCounter) t = counter_type(g->type);
+    if(st->from == LearnSpecies) t = species_type(g);
+    return &typed_moves[t % ECHO_TYPE_COUNT][st->move];
 }
 
 #define SPECIES_PER_TYPE 3
@@ -236,7 +248,7 @@ uint8_t echo_moves(const Echoid* e, Move out[MAX_MOVES]) {
     size_t first = learned > MAX_MOVES ? learned - MAX_MOVES : 0;
     uint8_t n = 0;
     for(size_t i = first; i < learned; i++)
-        out[n++] = *learn_step_move(g.type, &learnset[i]);
+        out[n++] = *learn_step_move(&g, &learnset[i]);
     return n;
 }
 
@@ -245,7 +257,7 @@ const Move* echo_move_learned_at(const uint8_t mac[6], uint8_t level) {
     EchoGenes g;
     echo_genes(mac, &g);
     for(size_t i = 0; i < LEARNSET_LEN; i++)
-        if(learnset[i].level == level) return learn_step_move(g.type, &learnset[i]);
+        if(learnset[i].level == level) return learn_step_move(&g, &learnset[i]);
     return NULL;
 }
 
@@ -255,7 +267,7 @@ const Move* echo_next_move(const Echoid* e, uint8_t* at_level) {
     for(size_t i = 0; i < LEARNSET_LEN; i++) {
         if(learnset[i].level > e->level) {
             if(at_level) *at_level = learnset[i].level;
-            return learn_step_move(g.type, &learnset[i]);
+            return learn_step_move(&g, &learnset[i]);
         }
     }
     return NULL;
@@ -706,6 +718,15 @@ static void player_attack(Battle* b, const Move* mv) {
         award_xp(b, false);
         battle_log(b, "The wild echoid fled!");
     }
+}
+
+void battle_switch(Battle* b, Echoid* next, bool costs_turn) {
+    if(b->result != BattleOngoing || !next || next == b->mine) return;
+    b->mine = next;
+    char msg[BATTLE_LOG_LEN];
+    snprintf(msg, sizeof(msg), "Go, %s!", echo_species_name(next->mac));
+    battle_log(b, msg);
+    if(costs_turn) enemy_turn(b);
 }
 
 void battle_attack(Battle* b, uint8_t slot) {

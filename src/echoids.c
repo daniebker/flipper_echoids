@@ -48,7 +48,8 @@ typedef enum {
     ScreenCalibrate,
     ScreenUseOn, /* pick which echoid a Tonic / Crystal is used on */
     ScreenSwap, /* pick a team member to swap out for a PAC echoid */
-    ScreenMovePick, /* battle: choose one of the lead's moves */
+    ScreenMovePick, /* battle: choose one of the active echoid's moves */
+    ScreenBattleSwap, /* battle: choose a team member to send in */
 } Screen;
 
 typedef enum {
@@ -93,6 +94,9 @@ typedef struct {
     int8_t battle_nearby;
     uint8_t battle_menu;
     uint8_t move_idx;
+    uint8_t bswap_idx;
+    uint8_t bswap_scroll;
+    bool bswap_forced; /* the active echoid fainted: must pick a replacement */
     bool detail_moves; /* detail screen shows the Moves page */
     uint8_t ball_idx;
 
@@ -156,6 +160,11 @@ typedef struct {
 /* ------------------------------------------------------------------------- */
 /* Helpers                                                                   */
 /* ------------------------------------------------------------------------- */
+
+static bool app_in_battle(App* app) {
+    return app->screen == ScreenBattle || app->screen == ScreenBallPick ||
+           app->screen == ScreenMovePick || app->screen == ScreenBattleSwap;
+}
 
 static void app_toast(App* app, const char* msg) {
     strncpy(app->toast, msg, sizeof(app->toast) - 1);
@@ -585,10 +594,10 @@ static void draw_battle(App* app, Canvas* canvas) {
     canvas_draw_str(canvas, 0, 55, b->log[1]);
 
     if(b->result == BattleOngoing) {
-        static const char* const opts[] = {"Hit", "Ball", "Run"};
-        for(int i = 0; i < 3; i++) {
-            int x = i * 43;
-            int w = i == 2 ? 42 : 43;
+        static const char* const opts[] = {"Hit", "Swap", "Ball", "Run"};
+        for(int i = 0; i < 4; i++) {
+            int x = i * 32;
+            int w = 32;
             if(i == app->battle_menu) {
                 canvas_draw_box(canvas, x, 56, w, 8);
                 canvas_set_color(canvas, ColorWhite);
@@ -735,6 +744,24 @@ static void draw_team(App* app, Canvas* canvas) {
             app->pac_scroll,
             -1);
     }
+    draw_toast(app, canvas);
+}
+
+static void draw_battle_swap(App* app, Canvas* canvas) {
+    uint8_t n = app->save.team_count > app->bswap_scroll ? app->save.team_count - app->bswap_scroll : 0;
+    int32_t active = (int32_t)(app->battle.mine - app->save.team);
+    /* ">" marks the echoid currently fighting. */
+    draw_roster(
+        app,
+        canvas,
+        app->bswap_forced ? "Send in who?" : "Switch to?",
+        NULL,
+        &app->save.team[app->bswap_scroll],
+        n,
+        app->save.team_count,
+        app->bswap_idx,
+        app->bswap_scroll,
+        active);
     draw_toast(app, canvas);
 }
 
@@ -972,8 +999,10 @@ static const char* const help_lines[] = {
     "Spark>Gale>Pulse>Void>Tide",
     "Hit: pick one of up to 4",
     "moves. New moves come with",
-    "levels (max Lv100). Typed",
-    "moves use the type chart.",
+    "levels (max Lv100). Every",
+    "move has a type and uses",
+    "the type chart. Swap sends",
+    "in another team member.",
     "",
     "Team holds 6 echoids; new",
     "catches beyond that go to",
@@ -1038,6 +1067,9 @@ static void draw_callback(Canvas* canvas, void* ctx) {
         break;
     case ScreenMovePick:
         draw_move_pick(app, canvas);
+        break;
+    case ScreenBattleSwap:
+        draw_battle_swap(app, canvas);
         break;
     case ScreenTeam:
         draw_team(app, canvas);
@@ -1579,8 +1611,7 @@ static void handle_ap(App* app, const ScanEvent* ev) {
     } else {
         /* Recycle slots round-robin, but never the one in battle. */
         uint8_t slot = app->nearby_next_replace;
-        if((int8_t)slot == app->battle_nearby && app->screen >= ScreenBattle &&
-           app->screen <= ScreenBallPick) {
+        if((int8_t)slot == app->battle_nearby && app_in_battle(app)) {
             slot = (slot + 1) % NEARBY_MAX;
         }
         app->nearby_next_replace = (slot + 1) % NEARBY_MAX;
@@ -1664,12 +1695,20 @@ static void battle_begin(App* app) {
         app_toast(app, "Already fought - find others");
         return;
     }
+    /* The lead fights; if it has fainted, the first healthy team member does. */
     Echoid* lead = app_lead(app);
     if(lead->hp == 0) {
-        app_toast(app, "Lead fainted! Heal or swap");
+        lead = NULL;
+        for(uint8_t i = 0; i < app->save.team_count && !lead; i++)
+            if(app->save.team[i].hp > 0) lead = &app->save.team[i];
+    }
+    if(!lead) {
+        app_toast(app, "Your team has all fainted");
         return;
     }
-    battle_start(&app->battle, lead, n->mac, echo_wild_level(n->mac, lead->level), n->ssid);
+    /* Wild levels follow your lead, even if another echoid starts. */
+    battle_start(
+        &app->battle, lead, n->mac, echo_wild_level(n->mac, app_lead(app)->level), n->ssid);
     app->battle_nearby = (int8_t)app->nearby_idx;
     app->battle_menu = 0;
     app->screen = ScreenBattle;
@@ -1682,8 +1721,41 @@ static void battle_log_line(Battle* b, const char* msg) {
     b->log[1][BATTLE_LOG_LEN - 1] = '\0';
 }
 
+/* Opens the switch picker; forced when the active echoid has fainted. */
+static void battle_swap_open(App* app, bool forced) {
+    bool any = false;
+    for(uint8_t i = 0; i < app->save.team_count; i++)
+        if(&app->save.team[i] != app->battle.mine && app->save.team[i].hp > 0) any = true;
+    if(!any) {
+        if(!forced) battle_log_line(&app->battle, "No one else can fight!");
+        return;
+    }
+    app->bswap_forced = forced;
+    app->bswap_idx = 0;
+    app->bswap_scroll = 0;
+    /* Start on the first healthy team member that isn't fighting. */
+    for(uint8_t i = 0; i < app->save.team_count; i++) {
+        if(&app->save.team[i] != app->battle.mine && app->save.team[i].hp > 0) {
+            app->bswap_idx = i;
+            break;
+        }
+    }
+    list_move(&app->bswap_idx, &app->bswap_scroll, app->save.team_count, TEAM_ROWS, 0);
+    app->screen = ScreenBattleSwap;
+}
+
 static void battle_after_action(App* app) {
     Battle* b = &app->battle;
+    /* Fainted with healthy echoids left: the battle goes on with a replacement. */
+    if(b->result == BattleLost) {
+        for(uint8_t i = 0; i < app->save.team_count; i++) {
+            if(&app->save.team[i] != b->mine && app->save.team[i].hp > 0) {
+                b->result = BattleOngoing;
+                battle_swap_open(app, true);
+                return;
+            }
+        }
+    }
     if(b->result == BattleOngoing) return;
     char msg[BATTLE_LOG_LEN];
     Nearby* n = (app->battle_nearby >= 0 && app->battle_nearby < app->nearby_count) ?
@@ -2010,8 +2082,8 @@ static void handle_input(App* app, InputEvent* ev) {
             }
             break;
         }
-        if(press && ev->key == InputKeyLeft) app->battle_menu = (app->battle_menu + 2) % 3;
-        if(press && ev->key == InputKeyRight) app->battle_menu = (app->battle_menu + 1) % 3;
+        if(press && ev->key == InputKeyLeft) app->battle_menu = (app->battle_menu + 3) % 4;
+        if(press && ev->key == InputKeyRight) app->battle_menu = (app->battle_menu + 1) % 4;
         if(press && ev->key == InputKeyOk) {
             switch(app->battle_menu) {
             case 0: {
@@ -2021,19 +2093,44 @@ static void handle_input(App* app, InputEvent* ev) {
                 break;
             }
             case 1:
+                battle_swap_open(app, false);
+                break;
+            case 2:
                 if(app->save.team_count >= PARTY_MAX && !pac_has_room(app)) {
                     battle_log_line(&app->battle, "No room: craft a PAC!");
                 } else {
                     app->screen = ScreenBallPick;
                 }
                 break;
-            case 2:
+            case 3:
                 battle_flee(&app->battle);
                 break;
             }
             battle_after_action(app);
         }
         break;
+
+    case ScreenBattleSwap: {
+        if(dy) {
+            list_move(&app->bswap_idx, &app->bswap_scroll, app->save.team_count, TEAM_ROWS, dy);
+        } else if(press && ev->key == InputKeyBack && !app->bswap_forced) {
+            app->screen = ScreenBattle;
+        } else if(press && ev->key == InputKeyOk && app->bswap_idx < app->save.team_count) {
+            Echoid* next = &app->save.team[app->bswap_idx];
+            if(next == app->battle.mine) {
+                app_toast(app, "Already fighting");
+            } else if(next->hp == 0) {
+                app_toast(app, "It has fainted");
+            } else {
+                battle_switch(&app->battle, next, !app->bswap_forced);
+                app->bswap_forced = false;
+                app->move_idx = 0;
+                app->screen = ScreenBattle;
+                battle_after_action(app);
+            }
+        }
+        break;
+    }
 
     case ScreenMovePick: {
         Move moves[MAX_MOVES];
@@ -2279,7 +2376,7 @@ static void app_tick(App* app) {
 
     if(app->screen == ScreenCalibrate) calibrate_tick(app);
 
-    bool in_battle = app->screen == ScreenBattle || app->screen == ScreenBallPick;
+    bool in_battle = app_in_battle(app);
     if(now - app->last_regen >= furi_ms_to_ticks(REGEN_MS)) {
         app->last_regen = now;
         if(!in_battle) {

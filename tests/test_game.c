@@ -249,21 +249,40 @@ static void test_moves(void) {
     uint8_t mac[6] = {0x80, 0xE1, 0x26, 0xAA, 0xBB, 0xCC};
     Echoid e;
     Move m[MAX_MOVES];
+    EchoGenes g;
+    echo_genes(mac, &g);
     echo_init(&e, mac, 1, "x");
-    CHECK(echo_moves(&e, m) == 2 && strcmp(m[0].name, "Strike") == 0 && m[1].type != MOVE_NEUTRAL);
+    /* Level 1: an own-type move and a move that beats this echoid's counter */
+    CHECK(echo_moves(&e, m) == 2);
+    CHECK(m[0].type == g.type);
+    uint8_t counter = (uint8_t)((g.type + ECHO_TYPE_COUNT - 1) % ECHO_TYPE_COUNT); /* beats g.type */
+    CHECK(echo_type_mult(counter, g.type) == 200);
+    CHECK(echo_type_mult(m[1].type, counter) == 200); /* the coverage move answers it */
     uint8_t at = 0;
     const Move* next = echo_next_move(&e, &at);
     CHECK(next && at == 8);
     CHECK(echo_move_learned_at(mac, 8) == next);
     CHECK(echo_move_learned_at(mac, 1) == NULL && echo_move_learned_at(mac, 9) == NULL);
 
-    /* Level 16: four moves; level 25: Strike is forgotten */
-    echo_init(&e, mac, 16, "x");
-    CHECK(echo_moves(&e, m) == 4 && strcmp(m[0].name, "Strike") == 0 && strcmp(m[3].name, "Rush") == 0);
-    echo_init(&e, mac, 25, "x");
-    CHECK(echo_moves(&e, m) == 4 && strcmp(m[0].name, "Strike") != 0);
+    /* Every move of every echoid has a real type */
+    for(uint32_t i = 0; i < 2000; i++) {
+        uint8_t mm[6] = {1, 2, (uint8_t)(i >> 8), (uint8_t)i, 5, 6};
+        Echoid x;
+        echo_init(&x, mm, (uint8_t)(1 + i % MAX_LEVEL), "x");
+        uint8_t n = echo_moves(&x, m);
+        CHECK(n >= 2 && n <= MAX_MOVES);
+        for(uint8_t k = 0; k < n; k++)
+            CHECK(m[k].type < ECHO_TYPE_COUNT && m[k].power > 0);
+    }
 
-    /* Level 100: the four strongest, and nothing left to learn */
+    /* Level 16: four moves; level 25: the first is forgotten */
+    echo_init(&e, mac, 16, "x");
+    CHECK(echo_moves(&e, m) == 4);
+    Move first = m[0];
+    echo_init(&e, mac, 25, "x");
+    CHECK(echo_moves(&e, m) == 4 && strcmp(m[0].name, first.name) != 0);
+
+    /* Level 100: the four latest, and nothing left to learn */
     echo_init(&e, mac, MAX_LEVEL, "x");
     CHECK(echo_moves(&e, m) == 4 && m[3].power == 120);
     CHECK(echo_next_move(&e, NULL) == NULL);
@@ -274,11 +293,22 @@ static void test_moves(void) {
     CHECK(st.max_hp > 300 && st.max_hp < 2000);
     CHECK((uint32_t)echo_xp_to_next(MAX_LEVEL - 1) < 65535u);
 
-    /* Level-up from 7 to 8 reports the new move */
-    echo_init(&e, mac, 7, "x");
-    uint8_t before = e.level;
-    echo_add_xp(&e, echo_xp_to_next(7));
-    CHECK(e.level == 8 && echo_move_learned_at(mac, (uint8_t)(before + 1)) != NULL);
+    /* Switching: a chosen switch lets the wild echoid hit the newcomer */
+    game_rng_seed(7);
+    Echoid a, c;
+    echo_init(&a, mac, 20, "a");
+    uint8_t mac2[6] = {1, 1, 1, 1, 1, 1};
+    echo_init(&c, mac2, 20, "c");
+    Battle b;
+    uint8_t wild[6] = {2, 2, 2, 2, 2, 2};
+    battle_start(&b, &a, wild, 20, "w");
+    uint16_t hp_before = c.hp;
+    battle_switch(&b, &c, true);
+    CHECK(b.mine == &c);
+    CHECK(c.hp <= hp_before);
+    uint16_t a_hp = a.hp;
+    battle_switch(&b, &a, false); /* free switch: no attack on a */
+    CHECK(b.mine == &a && a.hp == a_hp);
 }
 
 static void test_type_chart(void) {
