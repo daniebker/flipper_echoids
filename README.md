@@ -64,11 +64,11 @@ from a fixed pool of fake devices, so you can play and test without hardware.
 
 | Screen | Controls |
 |---|---|
-| **Collect** | Starts scanning. The top right shows how many echoids you've spotted (ball icon) and how many shards you've collected (diamond icon) since opening the app. Nearby access points are listed as echoids, showing species, level, type and signal strength. The panel at the bottom shows the selected echoid's rarity, type and stats (HP, ATK, DEF, SPD) at the level it would battle at. `*` = already in your team, `x` = already fought this session. **OK** battles the selected echoid. **Back** stops scanning. Bluetooth shards are collected automatically and shown in a popup. |
+| **Collect** | Starts scanning. The top right shows how many echoids you've spotted (ball icon) and how many shards you've collected (diamond icon) since opening the app. Nearby access points are listed as echoids, showing species, level, type and signal strength. The panel at the bottom shows the selected echoid's rarity, type and stats (HP, ATK, DEF, SPD) at the level it would battle at. `*` = already caught (in your team or PAC), `x` = already fought this session. **OK** battles the selected echoid. **Back** stops scanning. Bluetooth shards are collected automatically and shown in a popup. |
 | **Battle** | **←/→** choose an action, **OK** confirms. **Hit** is a plain attack. **Skill** is a stronger, less accurate attack that uses type matchups. **Ball** opens the throw menu, which shows each ball's catch chance. **Run** tries to escape. |
-| **Team** | Lists your echoids. **OK** opens one's details, **←/→** browses, and **OK** on the details screen makes it your lead (the echoid that fights). |
+| **Team** | Two tabs, switched with **←/→**: **Team** (up to 6 echoids you carry) and **PAC** (storage for the rest). **OK** opens an echoid's details, where **←/→** browses and **OK** opens its actions. For a team member: **Set as lead** (the echoid that fights) or **Send to PAC**. For a PAC echoid: **Move to team**. If the team is full, you pick which team member to swap out. The team always keeps at least one echoid. |
 | **Craft** | `+` marks recipes you can afford. **OK** crafts one. |
-| **Bag** | **←/→** switches between Items and Shards. **OK** on a Tonic or Echo Crystal opens your team list: pick the echoid to use it on with **↑/↓** and press **OK** (**Back** cancels). The list starts on your lead. |
+| **Bag** | **←/→** switches between Items and Shards. **OK** on a Tonic or Echo Crystal opens your team list (PAC echoids aren't listed): pick the echoid to use it on with **↑/↓** and press **OK** (**Back** cancels). The list starts on your lead. |
 | **Settings** | Board setup (see below), an in-app guide, and reset. |
 
 ### Types
@@ -112,6 +112,17 @@ than ending early.
 
 When a recipe accepts any element, the app uses shards from the element you have the
 most of. Cheaper tiers are used first.
+
+### Team and PAC
+
+- You carry up to **6** echoids in your team. Your lead is always one of them.
+- New catches join the team while it has room. After that they go to the **PAC**, and the
+  battle log says `Team full: sent to PAC`.
+- You can own **40** echoids in total, team and PAC together. When both are full you can't
+  throw balls.
+- Echoids in the PAC still regain HP over time.
+- Saves from before this change keep your lead and the next five echoids in the team. The
+  rest move to the PAC.
 
 ### Catching and levelling
 

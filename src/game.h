@@ -13,7 +13,9 @@
 
 #define ECHO_TYPE_COUNT  8
 #define SHARD_TIER_COUNT 3
-#define MAX_TEAM         40
+#define MAX_TEAM         40 /* all owned echoids: team + PAC storage */
+#define PARTY_MAX        6 /* echoids carried in the team */
+#define ECHO_FLAG_PARTY  0x01 /* Echoid.flags: in the team (else in the PAC) */
 #define MAX_LEVEL        50
 #define NAME_LEN         18
 #define SPRITE_SIZE      16
@@ -123,6 +125,22 @@ uint8_t echo_wild_level(const uint8_t mac[6], uint8_t lead_level);
 /* Damage multiplier in percent: 200 strong, 100 neutral, 50 resisted. */
 uint8_t echo_type_mult(uint8_t attacker, uint8_t defender);
 uint8_t echo_capture_chance(const Echoid* wild, uint8_t ball);
+
+/* ---------- Team / PAC roster ---------- */
+/* Lists the array indexes of team (party=true) or PAC members, in order. */
+uint8_t roster_list(const Echoid* all, uint8_t count, bool party, uint8_t* out);
+uint8_t roster_party_count(const Echoid* all, uint8_t count);
+/* Repairs flags: lead in the team and at most PARTY_MAX in the team. With
+ * fill, free team slots are filled from the PAC in order (old saves). */
+void roster_normalize(Echoid* all, uint8_t count, uint8_t* lead, bool fill);
+/* Moves a team member to the PAC. Refuses the last team member. If it was
+ * the lead, the next team member becomes lead. */
+bool roster_to_pac(Echoid* all, uint8_t count, uint8_t* lead, uint8_t idx);
+/* Moves a PAC echoid into the team. Refuses if the team is full. */
+bool roster_to_party(Echoid* all, uint8_t count, uint8_t idx);
+/* Swaps a PAC echoid with a team member (the incoming one takes over as
+ * lead if the outgoing one was the lead). */
+bool roster_swap(Echoid* all, uint8_t count, uint8_t* lead, uint8_t pac_idx, uint8_t party_idx);
 
 /* ---------- Crafting ---------- */
 typedef struct {

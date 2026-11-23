@@ -4,7 +4,7 @@
 #include "scanner.h"
 
 #define SAVE_MAGIC   0x45434831u /* "ECH1" */
-#define SAVE_VERSION 3
+#define SAVE_VERSION 4 /* v4: Echoid.flags marks team vs PAC */
 #define SEEN_BT_MAX  256
 
 typedef struct {

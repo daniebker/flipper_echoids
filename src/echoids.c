@@ -46,6 +46,7 @@ typedef enum {
     ScreenTerminal,
     ScreenCalibrate,
     ScreenUseOn, /* pick which echoid a Tonic / Crystal is used on */
+    ScreenSwap, /* pick a team member to swap out for a PAC echoid */
 } Screen;
 
 typedef enum {
@@ -90,8 +91,17 @@ typedef struct {
     uint8_t battle_menu;
     uint8_t ball_idx;
 
+    /* Team screen: tab 0 = team, 1 = PAC. Indexes are positions in that list. */
+    uint8_t team_tab;
     uint8_t team_idx;
     uint8_t team_scroll;
+    uint8_t pac_idx;
+    uint8_t pac_scroll;
+    bool detail_menu; /* actions popup open on the detail screen */
+    uint8_t detail_menu_idx;
+    uint8_t swap_from; /* array index of the PAC echoid joining the team */
+    uint8_t swap_idx;
+    uint8_t swap_scroll;
     uint8_t craft_idx;
     uint8_t craft_scroll;
     uint8_t bag_tab;
@@ -156,6 +166,18 @@ static bool app_owns(App* app, const uint8_t mac[6]) {
     return false;
 }
 
+/* Array indexes of the team (party=true) or the PAC. */
+static uint8_t app_roster(App* app, bool party, uint8_t* out) {
+    return roster_list(app->save.team, app->save.team_count, party, out);
+}
+
+/* Position of an array index within a roster list (0 if absent). */
+static uint8_t roster_pos(const uint8_t* list, uint8_t n, uint8_t idx) {
+    for(uint8_t i = 0; i < n; i++)
+        if(list[i] == idx) return i;
+    return 0;
+}
+
 static void app_new_game(App* app) {
     /* Keep the board configuration when starting over. Only the settings are
      * copied: the whole SaveData is too big for the app's stack. */
@@ -196,6 +218,7 @@ static void app_new_game(App* app) {
     const uint8_t* mac = furi_hal_version_get_ble_mac();
     const char* name = furi_hal_version_get_name_ptr();
     echo_init(&app->save.team[0], mac, 1, name ? name : "Flipper");
+    app->save.team[0].flags = ECHO_FLAG_PARTY;
     app->save.team_count = 1;
     app->save.lead = 0;
     app->dirty = true;
@@ -559,25 +582,33 @@ static void draw_ball_pick(App* app, Canvas* canvas) {
     }
 }
 
-static void draw_team_list(
+/* Draws a list of echoids given by array index. */
+static void draw_roster(
     App* app,
     Canvas* canvas,
     const char* title,
     const char* right,
+    const uint8_t* list,
+    uint8_t n,
     uint8_t sel,
     uint8_t scroll) {
     char buf[32];
     draw_title(canvas, title, right);
+    if(n == 0) {
+        canvas_draw_str_aligned(canvas, 64, 34, AlignCenter, AlignCenter, "Empty");
+        return;
+    }
     for(uint8_t row = 0; row < TEAM_ROWS; row++) {
-        uint8_t i = scroll + row;
-        if(i >= app->save.team_count) break;
+        uint8_t pos = scroll + row;
+        if(pos >= n) break;
+        uint8_t i = list[pos];
         Echoid* e = &app->save.team[i];
         EchoGenes g;
         echo_genes(e->mac, &g);
         EchoStats s;
         echo_stats(e, &s);
         int y = 22 + row * 10;
-        draw_row(canvas, y, i == sel);
+        draw_row(canvas, y, pos == sel);
         snprintf(buf, sizeof(buf), "%s%s", i == app->save.lead ? ">" : " ", echo_species_name(e->mac));
         canvas_draw_str(canvas, 2, y, buf);
         snprintf(buf, sizeof(buf), "L%u", e->level);
@@ -592,32 +623,68 @@ static void draw_team_list(
         }
     }
     canvas_set_color(canvas, ColorBlack);
-    if(app->save.team_count > TEAM_ROWS) {
-        elements_scrollbar_pos(canvas, 127, 14, 48, sel, app->save.team_count);
+    if(n > TEAM_ROWS) {
+        elements_scrollbar_pos(canvas, 127, 14, 48, sel, n);
     }
 }
 
 static void draw_team(App* app, Canvas* canvas) {
+    uint8_t list[MAX_TEAM];
     char buf[16];
-    snprintf(buf, sizeof(buf), "%u/%u", app->save.team_count, MAX_TEAM);
-    draw_team_list(app, canvas, "Team", buf, app->team_idx, app->team_scroll);
+    if(app->team_tab == 0) {
+        uint8_t n = app_roster(app, true, list);
+        snprintf(buf, sizeof(buf), "%u/%u  <>", n, PARTY_MAX);
+        draw_roster(app, canvas, "Team", buf, list, n, app->team_idx, app->team_scroll);
+    } else {
+        uint8_t party = roster_party_count(app->save.team, app->save.team_count);
+        uint8_t n = app_roster(app, false, list);
+        snprintf(buf, sizeof(buf), "%u/%u  <>", n, MAX_TEAM - party);
+        draw_roster(app, canvas, "PAC", buf, list, n, app->pac_idx, app->pac_scroll);
+    }
+    draw_toast(app, canvas);
+}
+
+static void draw_swap(App* app, Canvas* canvas) {
+    uint8_t list[MAX_TEAM];
+    uint8_t n = app_roster(app, true, list);
+    draw_roster(app, canvas, "Swap out who?", NULL, list, n, app->swap_idx, app->swap_scroll);
+    draw_toast(app, canvas);
 }
 
 static void draw_use_on(App* app, Canvas* canvas) {
     char buf[16];
     snprintf(buf, sizeof(buf), "x%u", app->save.inv.items[app->use_item_id]);
-    draw_team_list(
+    uint8_t list[MAX_TEAM];
+    uint8_t n = app_roster(app, true, list);
+    draw_roster(
         app,
         canvas,
         app->use_item_id == ItemTonic ? "Heal who?" : "Crystal on?",
         buf,
+        list,
+        n,
         app->use_idx,
         app->use_scroll);
     draw_toast(app, canvas);
 }
 
+/* The echoid shown on the detail screen: array index, its position and list size. */
+static uint8_t detail_target(App* app, uint8_t* pos, uint8_t* n) {
+    uint8_t list[MAX_TEAM];
+    *n = app_roster(app, app->team_tab == 0, list);
+    *pos = app->team_tab == 0 ? app->team_idx : app->pac_idx;
+    if(*n == 0) return 0;
+    if(*pos >= *n) *pos = *n - 1;
+    return list[*pos];
+}
+
+static const char* const detail_team_actions[] = {"Set as lead", "Send to PAC"};
+static const char* const detail_pac_actions[] = {"Move to team"};
+
 static void draw_detail(App* app, Canvas* canvas) {
-    Echoid* e = &app->save.team[app->team_idx];
+    uint8_t pos, n;
+    uint8_t idx = detail_target(app, &pos, &n);
+    Echoid* e = &app->save.team[idx];
     EchoGenes g;
     echo_genes(e->mac, &g);
     EchoStats s;
@@ -627,7 +694,14 @@ static void draw_detail(App* app, Canvas* canvas) {
     canvas_set_font(canvas, FontPrimary);
     canvas_draw_str(canvas, 0, 9, echo_species_name(e->mac));
     canvas_set_font(canvas, FontSecondary);
-    snprintf(buf, sizeof(buf), "%u/%u", app->team_idx + 1, app->save.team_count);
+    snprintf(
+        buf,
+        sizeof(buf),
+        "%s%s %u/%u",
+        idx == app->save.lead ? "LEAD " : "",
+        app->team_tab == 0 ? "Team" : "PAC",
+        pos + 1,
+        n);
     canvas_draw_str_aligned(canvas, 127, 9, AlignRight, AlignBottom, buf);
 
     draw_sprite(canvas, e->mac, 0, 12, 2);
@@ -641,8 +715,28 @@ static void draw_detail(App* app, Canvas* canvas) {
     canvas_draw_str(canvas, 36, 46, buf);
     snprintf(buf, sizeof(buf), "From: %.20s", e->origin);
     canvas_draw_str(canvas, 0, 54, buf);
-    canvas_draw_str(
-        canvas, 0, 63, app->team_idx == app->save.lead ? "* Lead echoid  <> browse" : "OK: set lead  <> browse");
+    canvas_draw_str(canvas, 0, 63, "OK: actions  <> browse");
+
+    if(app->detail_menu) {
+        const char* const* opts = app->team_tab == 0 ? detail_team_actions : detail_pac_actions;
+        uint8_t count = app->team_tab == 0 ? 2 : 1;
+        int h = 6 + count * 10;
+        int y0 = 63 - h;
+        canvas_set_color(canvas, ColorWhite);
+        canvas_draw_box(canvas, 56, y0, 72, h + 1);
+        canvas_set_color(canvas, ColorBlack);
+        canvas_draw_rframe(canvas, 56, y0, 72, h + 1, 2);
+        for(uint8_t i = 0; i < count; i++) {
+            int y = y0 + 12 + i * 10;
+            if(i == app->detail_menu_idx) {
+                canvas_draw_box(canvas, 58, y - 8, 68, 10);
+                canvas_set_color(canvas, ColorWhite);
+            }
+            canvas_draw_str(canvas, 61, y, opts[i]);
+            canvas_set_color(canvas, ColorBlack);
+        }
+    }
+    draw_toast(app, canvas);
 }
 
 static void draw_craft(App* app, Canvas* canvas) {
@@ -749,6 +843,10 @@ static const char* const help_lines[] = {
     "Spark>Gale>Pulse>Void>Tide",
     "Skills use type, Hit doesn't.",
     "",
+    "Team holds 6 echoids; new",
+    "catches beyond that go to",
+    "the PAC. Team <> PAC tabs.",
+    "",
     "Win or catch to gain XP.",
     "HP regenerates slowly, or",
     "use a Tonic from the Bag.",
@@ -832,6 +930,9 @@ static void draw_callback(Canvas* canvas, void* ctx) {
         break;
     case ScreenUseOn:
         draw_use_on(app, canvas);
+        break;
+    case ScreenSwap:
+        draw_swap(app, canvas);
         break;
     }
     furi_mutex_release(app->mutex);
@@ -1457,7 +1558,12 @@ static void battle_after_action(App* app) {
         SaveData* sv = &app->save;
         Echoid caught = b->wild;
         if(caught.hp == 0) caught.hp = 1;
-        if(sv->team_count < MAX_TEAM) sv->team[sv->team_count++] = caught;
+        if(sv->team_count < MAX_TEAM) {
+            bool to_team = roster_party_count(sv->team, sv->team_count) < PARTY_MAX;
+            caught.flags = to_team ? ECHO_FLAG_PARTY : 0;
+            sv->team[sv->team_count++] = caught;
+            if(!to_team) battle_log_line(b, "Team full: sent to PAC");
+        }
         sv->captures++;
         if(n) n->state = NearbyOwned;
         notification_message(app->notif, &sequence_success);
@@ -1540,6 +1646,84 @@ static bool use_item_on(App* app, uint8_t item, Echoid* target) {
 /* Input                                                                     */
 /* ------------------------------------------------------------------------- */
 
+/* Opens the Team screen on a tab, selecting the given array index. */
+static void team_open(App* app, uint8_t tab, uint8_t select) {
+    uint8_t list[MAX_TEAM];
+    uint8_t n = app_roster(app, tab == 0, list);
+    uint8_t* idx = tab == 0 ? &app->team_idx : &app->pac_idx;
+    uint8_t* scroll = tab == 0 ? &app->team_scroll : &app->pac_scroll;
+    app->team_tab = tab;
+    *idx = roster_pos(list, n, select);
+    *scroll = 0;
+    list_move(idx, scroll, n, TEAM_ROWS, 0);
+    app->detail_menu = false;
+    app->screen = ScreenTeam;
+}
+
+static void detail_input(App* app, InputEvent* ev, bool press, int dy) {
+    uint8_t pos, n;
+    uint8_t target = detail_target(app, &pos, &n);
+    const char* name = echo_species_name(app->save.team[target].mac);
+    char msg[40];
+
+    if(app->detail_menu) {
+        uint8_t count = app->team_tab == 0 ? 2 : 1;
+        if(dy) {
+            app->detail_menu_idx = (uint8_t)((app->detail_menu_idx + count + dy) % count);
+        } else if(press && ev->key == InputKeyBack) {
+            app->detail_menu = false;
+        } else if(press && ev->key == InputKeyOk) {
+            app->detail_menu = false;
+            if(app->team_tab == 0 && app->detail_menu_idx == 0) {
+                /* Set as lead */
+                if(app->save.lead != target) {
+                    app->save.lead = target;
+                    app->dirty = true;
+                    snprintf(msg, sizeof(msg), "%s is now lead", name);
+                    app_toast(app, msg);
+                    notification_message(app->notif, &sequence_blink_green_10);
+                }
+            } else if(app->team_tab == 0) {
+                /* Send to PAC */
+                if(roster_to_pac(app->save.team, app->save.team_count, &app->save.lead, target)) {
+                    app->dirty = true;
+                    snprintf(msg, sizeof(msg), "%s sent to PAC", name);
+                    team_open(app, 0, app->save.lead);
+                    app_toast(app, msg);
+                } else {
+                    app_toast(app, "Team needs one echoid");
+                }
+            } else {
+                /* Move to team, or choose who to swap out if it's full */
+                if(roster_to_party(app->save.team, app->save.team_count, target)) {
+                    app->dirty = true;
+                    snprintf(msg, sizeof(msg), "%s joined the team", name);
+                    team_open(app, 0, target);
+                    app_toast(app, msg);
+                } else {
+                    app->swap_from = target;
+                    app->swap_idx = 0;
+                    app->swap_scroll = 0;
+                    app->screen = ScreenSwap;
+                    app_toast(app, "Team full: pick a swap");
+                }
+            }
+        }
+        return;
+    }
+
+    if(press && (ev->key == InputKeyLeft || ev->key == InputKeyRight)) {
+        uint8_t* idx = app->team_tab == 0 ? &app->team_idx : &app->pac_idx;
+        uint8_t* scroll = app->team_tab == 0 ? &app->team_scroll : &app->pac_scroll;
+        list_move(idx, scroll, n, TEAM_ROWS, ev->key == InputKeyLeft ? -1 : 1);
+    } else if(press && ev->key == InputKeyOk) {
+        app->detail_menu = true;
+        app->detail_menu_idx = 0;
+    } else if(press && ev->key == InputKeyBack) {
+        app->screen = ScreenTeam;
+    }
+}
+
 static void handle_input(App* app, InputEvent* ev) {
     bool nav = ev->type == InputTypeShort || ev->type == InputTypeRepeat;
     bool press = ev->type == InputTypeShort;
@@ -1562,10 +1746,7 @@ static void handle_input(App* app, InputEvent* ev) {
                 collect_start(app);
                 break;
             case 1:
-                app->team_idx = app->save.lead;
-                app->team_scroll = 0;
-                list_move(&app->team_idx, &app->team_scroll, app->save.team_count, TEAM_ROWS, 0);
-                app->screen = ScreenTeam;
+                team_open(app, 0, app->save.lead);
                 break;
             case 2:
                 app->screen = ScreenCraft;
@@ -1613,7 +1794,7 @@ static void handle_input(App* app, InputEvent* ev) {
                 break;
             case 2:
                 if(app->save.team_count >= MAX_TEAM) {
-                    battle_log_line(&app->battle, "Team is full!");
+                    battle_log_line(&app->battle, "Team and PAC are full!");
                 } else {
                     app->screen = ScreenBallPick;
                 }
@@ -1639,34 +1820,53 @@ static void handle_input(App* app, InputEvent* ev) {
         }
         break;
 
-    case ScreenTeam:
+    case ScreenTeam: {
+        uint8_t list[MAX_TEAM];
+        uint8_t n = app_roster(app, app->team_tab == 0, list);
+        uint8_t* idx = app->team_tab == 0 ? &app->team_idx : &app->pac_idx;
+        uint8_t* scroll = app->team_tab == 0 ? &app->team_scroll : &app->pac_scroll;
         if(dy) {
-            list_move(&app->team_idx, &app->team_scroll, app->save.team_count, TEAM_ROWS, dy);
-        } else if(press && ev->key == InputKeyOk) {
+            list_move(idx, scroll, n, TEAM_ROWS, dy);
+        } else if(press && (ev->key == InputKeyLeft || ev->key == InputKeyRight)) {
+            app->team_tab ^= 1; /* Team <-> PAC */
+        } else if(press && ev->key == InputKeyOk && n > 0) {
+            app->detail_menu = false;
             app->screen = ScreenDetail;
         } else if(press && ev->key == InputKeyBack) {
             app->screen = ScreenMenu;
         }
         break;
+    }
 
     case ScreenDetail:
-        if(press && (ev->key == InputKeyLeft || ev->key == InputKeyRight)) {
-            list_move(
-                &app->team_idx,
-                &app->team_scroll,
-                app->save.team_count,
-                TEAM_ROWS,
-                ev->key == InputKeyLeft ? -1 : 1);
-        } else if(press && ev->key == InputKeyOk) {
-            if(app->save.lead != app->team_idx) {
-                app->save.lead = app->team_idx;
+        detail_input(app, ev, press, dy);
+        break;
+
+    case ScreenSwap: {
+        uint8_t list[MAX_TEAM];
+        uint8_t n = app_roster(app, true, list);
+        if(dy) {
+            list_move(&app->swap_idx, &app->swap_scroll, n, TEAM_ROWS, dy);
+        } else if(press && ev->key == InputKeyOk && app->swap_idx < n) {
+            uint8_t out = list[app->swap_idx];
+            if(roster_swap(app->save.team, app->save.team_count, &app->save.lead, app->swap_from, out)) {
+                char msg[40];
+                snprintf(
+                    msg,
+                    sizeof(msg),
+                    "%s <> %s",
+                    echo_species_name(app->save.team[app->swap_from].mac),
+                    echo_species_name(app->save.team[out].mac));
                 app->dirty = true;
-                notification_message(app->notif, &sequence_blink_green_10);
+                notification_message(app->notif, &sequence_success);
+                team_open(app, 0, app->swap_from);
+                app_toast(app, msg);
             }
         } else if(press && ev->key == InputKeyBack) {
-            app->screen = ScreenTeam;
+            app->screen = ScreenDetail;
         }
         break;
+    }
 
     case ScreenCraft:
         if(dy) {
@@ -1701,9 +1901,11 @@ static void handle_input(App* app, InputEvent* ev) {
             } else {
                 /* Choose who to use it on, starting at the lead. */
                 app->use_item_id = item;
-                app->use_idx = app->save.lead;
+                uint8_t list[MAX_TEAM];
+                uint8_t n = app_roster(app, true, list);
+                app->use_idx = roster_pos(list, n, app->save.lead);
                 app->use_scroll = 0;
-                list_move(&app->use_idx, &app->use_scroll, app->save.team_count, TEAM_ROWS, 0);
+                list_move(&app->use_idx, &app->use_scroll, n, TEAM_ROWS, 0);
                 app->toast_until = 0;
                 app->screen = ScreenUseOn;
             }
@@ -1757,18 +1959,21 @@ static void handle_input(App* app, InputEvent* ev) {
         terminal_input(app, ev, press);
         break;
 
-    case ScreenUseOn:
+    case ScreenUseOn: {
+        uint8_t list[MAX_TEAM];
+        uint8_t n = app_roster(app, true, list);
         if(dy) {
-            list_move(&app->use_idx, &app->use_scroll, app->save.team_count, TEAM_ROWS, dy);
-        } else if(press && ev->key == InputKeyOk) {
+            list_move(&app->use_idx, &app->use_scroll, n, TEAM_ROWS, dy);
+        } else if(press && ev->key == InputKeyOk && app->use_idx < n) {
             /* On success go back to the Bag (the toast shows there); on a
              * refusal (already healthy, max level) stay so another can be picked. */
-            if(use_item_on(app, app->use_item_id, &app->save.team[app->use_idx]))
+            if(use_item_on(app, app->use_item_id, &app->save.team[list[app->use_idx]]))
                 app->screen = ScreenBag;
         } else if(press && ev->key == InputKeyBack) {
             app->screen = ScreenBag;
         }
         break;
+    }
 
     case ScreenCalibrate:
         if(press && (ev->key == InputKeyBack || (ev->key == InputKeyOk && calibrate_done(app)))) {

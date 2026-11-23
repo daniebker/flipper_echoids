@@ -291,6 +291,81 @@ uint8_t echo_capture_chance(const Echoid* wild, uint8_t ball) {
 }
 
 /* ------------------------------------------------------------------------- */
+/* Team / PAC roster                                                         */
+/* ------------------------------------------------------------------------- */
+
+static bool in_party(const Echoid* e) {
+    return (e->flags & ECHO_FLAG_PARTY) != 0;
+}
+
+uint8_t roster_list(const Echoid* all, uint8_t count, bool party, uint8_t* out) {
+    uint8_t n = 0;
+    for(uint8_t i = 0; i < count; i++)
+        if(in_party(&all[i]) == party) out[n++] = i;
+    return n;
+}
+
+uint8_t roster_party_count(const Echoid* all, uint8_t count) {
+    uint8_t n = 0;
+    for(uint8_t i = 0; i < count; i++)
+        if(in_party(&all[i])) n++;
+    return n;
+}
+
+void roster_normalize(Echoid* all, uint8_t count, uint8_t* lead, bool fill) {
+    if(count == 0) return;
+    if(*lead >= count) *lead = 0;
+    all[*lead].flags |= ECHO_FLAG_PARTY;
+    uint8_t n = 1;
+    /* Keep the first members already in the team, up to the limit. */
+    for(uint8_t i = 0; i < count; i++) {
+        if(i == *lead || !in_party(&all[i])) continue;
+        if(n < PARTY_MAX)
+            n++;
+        else
+            all[i].flags &= (uint8_t)~ECHO_FLAG_PARTY;
+    }
+    /* Fill free team slots from the PAC in order. */
+    for(uint8_t i = 0; fill && i < count && n < PARTY_MAX; i++) {
+        if(!in_party(&all[i])) {
+            all[i].flags |= ECHO_FLAG_PARTY;
+            n++;
+        }
+    }
+}
+
+bool roster_to_pac(Echoid* all, uint8_t count, uint8_t* lead, uint8_t idx) {
+    if(idx >= count || !in_party(&all[idx])) return false;
+    if(roster_party_count(all, count) <= 1) return false;
+    all[idx].flags &= (uint8_t)~ECHO_FLAG_PARTY;
+    if(*lead == idx) {
+        for(uint8_t i = 0; i < count; i++) {
+            if(in_party(&all[i])) {
+                *lead = i;
+                break;
+            }
+        }
+    }
+    return true;
+}
+
+bool roster_to_party(Echoid* all, uint8_t count, uint8_t idx) {
+    if(idx >= count || in_party(&all[idx])) return false;
+    if(roster_party_count(all, count) >= PARTY_MAX) return false;
+    all[idx].flags |= ECHO_FLAG_PARTY;
+    return true;
+}
+
+bool roster_swap(Echoid* all, uint8_t count, uint8_t* lead, uint8_t pac_idx, uint8_t party_idx) {
+    if(pac_idx >= count || party_idx >= count) return false;
+    if(in_party(&all[pac_idx]) || !in_party(&all[party_idx])) return false;
+    all[party_idx].flags &= (uint8_t)~ECHO_FLAG_PARTY;
+    all[pac_idx].flags |= ECHO_FLAG_PARTY;
+    if(*lead == party_idx) *lead = pac_idx;
+    return true;
+}
+
+/* ------------------------------------------------------------------------- */
 /* Crafting                                                                  */
 /* ------------------------------------------------------------------------- */
 

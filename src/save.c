@@ -25,20 +25,31 @@ bool save_load(SaveData* data) {
             ok = true;
         } else if(
             (data->version == 1 && read >= SAVE_V1_SIZE) ||
-            (data->version == 2 && read >= SAVE_V2_SIZE)) {
-            /* Upgrade: fields added since start at their zero defaults. */
-            size_t keep = data->version == 1 ? SAVE_V1_SIZE : SAVE_V2_SIZE;
-            memset((uint8_t*)data + keep, 0, sizeof(SaveData) - keep);
-            /* Devices that already gave a shard start their cooldown now. */
-            uint32_t now = furi_hal_rtc_get_timestamp();
-            for(uint16_t i = 0; i < SEEN_BT_MAX; i++)
-                data->seen_bt_time[i] = now;
+            (data->version == 2 && read >= SAVE_V2_SIZE) ||
+            (data->version == 3 && read == sizeof(SaveData))) {
+            if(data->version < 3) {
+                /* Fields added since start at their zero defaults. */
+                size_t keep = data->version == 1 ? SAVE_V1_SIZE : SAVE_V2_SIZE;
+                memset((uint8_t*)data + keep, 0, sizeof(SaveData) - keep);
+                /* Devices that already gave a shard start their cooldown now. */
+                uint32_t now = furi_hal_rtc_get_timestamp();
+                for(uint16_t i = 0; i < SEEN_BT_MAX; i++)
+                    data->seen_bt_time[i] = now;
+            }
+            /* Before v4 everything was "the team": keep the lead plus the
+             * first five others in the team and move the rest to the PAC. */
+            uint8_t count = data->team_count <= MAX_TEAM ? data->team_count : MAX_TEAM;
+            for(uint8_t i = 0; i < count; i++)
+                data->team[i].flags = 0;
+            if(data->lead >= count) data->lead = 0;
+            roster_normalize(data->team, count, &data->lead, true);
             data->version = SAVE_VERSION;
             ok = true;
         }
     }
     if(ok && (data->team_count == 0 || data->team_count > MAX_TEAM)) ok = false;
     if(ok && data->lead >= data->team_count) data->lead = 0;
+    if(ok) roster_normalize(data->team, data->team_count, &data->lead, false);
     if(ok && data->seen_bt_count > SEEN_BT_MAX) data->seen_bt_count = SEEN_BT_MAX;
     if(ok) data->seen_bt_pos %= SEEN_BT_MAX;
     return ok;

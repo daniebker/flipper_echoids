@@ -198,6 +198,45 @@ static void test_format_duration(void) {
     CHECK(strcmp(b, "1h05m") == 0);
 }
 
+static void test_roster(void) {
+    Echoid all[10];
+    memset(all, 0, sizeof(all));
+    for(int i = 0; i < 10; i++)
+        all[i].mac[5] = (uint8_t)i;
+    uint8_t lead = 7, idx[MAX_TEAM];
+
+    /* Old save: lead plus the first five others go in the team */
+    roster_normalize(all, 10, &lead, true);
+    CHECK(roster_party_count(all, 10) == PARTY_MAX);
+    CHECK(all[7].flags & ECHO_FLAG_PARTY);
+    CHECK(roster_list(all, 10, true, idx) == 6 && idx[0] == 0 && idx[5] == 7);
+    CHECK(roster_list(all, 10, false, idx) == 4 && idx[0] == 5);
+
+    /* Full team refuses another; swap works and hands over the lead */
+    CHECK(!roster_to_party(all, 10, 5));
+    CHECK(roster_swap(all, 10, &lead, 5, 7));
+    CHECK(lead == 5 && (all[5].flags & ECHO_FLAG_PARTY) && !(all[7].flags & ECHO_FLAG_PARTY));
+    CHECK(!roster_swap(all, 10, &lead, 5, 0)); /* 5 is no longer in the PAC */
+
+    /* Sending the lead to the PAC picks the next team member as lead */
+    CHECK(roster_to_pac(all, 10, &lead, 5));
+    CHECK(lead == 0 && roster_party_count(all, 10) == 5);
+    CHECK(roster_to_party(all, 10, 9));
+    CHECK(roster_party_count(all, 10) == 6);
+
+    /* A normal load must not pull PAC echoids into a short team */
+    CHECK(roster_to_pac(all, 10, &lead, 1));
+    roster_normalize(all, 10, &lead, false);
+    CHECK(roster_party_count(all, 10) == 5);
+
+    /* The last team member can't leave */
+    Echoid one[2];
+    memset(one, 0, sizeof(one));
+    uint8_t l1 = 0;
+    roster_normalize(one, 1, &l1, true);
+    CHECK(!roster_to_pac(one, 1, &l1, 0));
+}
+
 static void test_type_chart(void) {
     CHECK(echo_type_mult(EchoTypeTide, EchoTypeEmber) == 200);
     CHECK(echo_type_mult(EchoTypeEmber, EchoTypeTide) == 50);
@@ -273,6 +312,7 @@ int main(void) {
     test_type_chart();
     test_shard_cooldown();
     test_format_duration();
+    test_roster();
     if(failures) {
         printf("%d failure(s)\n", failures);
         return 1;
