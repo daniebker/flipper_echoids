@@ -209,6 +209,32 @@ every time you scan:
   If you're in a battle at the time, the list updates once the battle ends.
 - This only affects wild echoids. Bluetooth shards and the echoids you own aren't affected.
 
+### Star rating
+
+Every echoid has a **star rating** showing how good its random stats are. An echoid's base
+stats are a fixed floor, plus a **random roll** from its MAC address, plus a rarity bonus. The
+rating only judges the random roll, so a Common can be perfect too.
+
+- **Each stat** (HP, ATK, DEF, SPD) gets 1–3 stars:
+
+  | Stars | Roll |
+  |---|---|
+  | ★★★ | The highest possible roll. This stat can't be stronger. |
+  | ★★☆ | The top half of the range |
+  | ★☆☆ | The bottom half |
+
+  HP rolls 0–16. ATK, DEF and SPD roll 0–8.
+- **Overall**, the four stats' stars add up to between 4 and 12:
+  - ★★★ means all four are ★★★: a **perfect** echoid whose stats can't be any stronger.
+    About 1 in 14,000 echoids is perfect.
+  - ★★☆ means 8–11 stars in total, about 1 in 4 echoids.
+  - ★☆☆ means 7 or fewer.
+- **Where to see it:** the overall stars appear in the Collect info panel, so you can rate a
+  wild echoid before you fight it, and next to the type on an echoid's details screen. Press
+  **↑/↓** on the details screen to reach the **Rating** page, which shows each stat's roll
+  (for example `ATK 7/8`) with its stars and the star total. A perfect echoid says
+  `PERFECT!`.
+
 ### Catching and levelling
 
 - The catch chance depends on rarity (Common 60%, down to Legendary 8%), the ball, and

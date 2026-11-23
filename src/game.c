@@ -228,6 +228,37 @@ const char* echo_type_name(uint8_t type) {
 const char* echo_type_short(uint8_t type) {
     return type_short[type % ECHO_TYPE_COUNT];
 }
+uint8_t stat_stars(uint8_t roll, uint8_t max) {
+    if(roll >= max) return 3; /* perfect: can't be any stronger */
+    if(roll * 2u >= max) return 2; /* top half */
+    return 1;
+}
+
+void echo_rating(const uint8_t mac[6], EchoRating* out) {
+    EchoGenes g;
+    echo_genes(mac, &g);
+    out->max[StatHp] = STAT_HP_ROLL_MAX;
+    out->max[StatAtk] = out->max[StatDef] = out->max[StatSpd] = STAT_ROLL_MAX;
+    /* The random roll is the base stat minus its floor and the rarity bonus. */
+    out->roll[StatHp] = (uint8_t)(g.base_hp - STAT_HP_FLOOR - g.rarity * 3);
+    out->roll[StatAtk] = (uint8_t)(g.base_atk - STAT_FLOOR - g.rarity * 2);
+    out->roll[StatDef] = (uint8_t)(g.base_def - STAT_FLOOR - g.rarity * 2);
+    out->roll[StatSpd] = (uint8_t)(g.base_spd - STAT_FLOOR - g.rarity * 2);
+    uint8_t total = 0;
+    for(int i = 0; i < STAT_COUNT; i++) {
+        out->stars[i] = stat_stars(out->roll[i], out->max[i]);
+        total += out->stars[i];
+    }
+    out->total_stars = total;
+    /* Overall: 3 only if every stat is perfect; 2 from 8 of 12 stars. */
+    out->overall = total == STAT_COUNT * 3 ? 3 : (total >= 8 ? 2 : 1);
+}
+
+const char* stat_name(uint8_t stat) {
+    static const char* const names[STAT_COUNT] = {"HP", "ATK", "DEF", "SPD"};
+    return names[stat % STAT_COUNT];
+}
+
 char echo_rarity_letter(uint8_t rarity) {
     return "CUREL"[rarity % RarityCount];
 }
@@ -285,10 +316,10 @@ void echo_genes(const uint8_t mac[6], EchoGenes* g) {
     g->species = species;
 
     uint8_t bonus = g->rarity;
-    g->base_hp = 24 + mac_stream_next(&st) % 17 + bonus * 3;
-    g->base_atk = 8 + mac_stream_next(&st) % 9 + bonus * 2;
-    g->base_def = 8 + mac_stream_next(&st) % 9 + bonus * 2;
-    g->base_spd = 8 + mac_stream_next(&st) % 9 + bonus * 2;
+    g->base_hp = STAT_HP_FLOOR + mac_stream_next(&st) % (STAT_HP_ROLL_MAX + 1) + bonus * 3;
+    g->base_atk = STAT_FLOOR + mac_stream_next(&st) % (STAT_ROLL_MAX + 1) + bonus * 2;
+    g->base_def = STAT_FLOOR + mac_stream_next(&st) % (STAT_ROLL_MAX + 1) + bonus * 2;
+    g->base_spd = STAT_FLOOR + mac_stream_next(&st) % (STAT_ROLL_MAX + 1) + bonus * 2;
 }
 
 const char* species_name_of(uint8_t type, uint8_t species) {

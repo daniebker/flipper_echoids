@@ -127,6 +127,33 @@ const char* const* echo_name_corpus(uint8_t type);
 const char* echo_type_name(uint8_t type);
 const char* echo_type_short(uint8_t type);
 const char* echo_rarity_name(uint8_t rarity);
+/* ---------- Star rating of the random stat rolls ---------- */
+/* Base stats are a floor, plus a random roll from the MAC, plus a rarity bonus. */
+#define STAT_HP_FLOOR    24
+#define STAT_HP_ROLL_MAX 16
+#define STAT_FLOOR       8
+#define STAT_ROLL_MAX    8
+
+typedef enum {
+    StatHp,
+    StatAtk,
+    StatDef,
+    StatSpd,
+    STAT_COUNT,
+} StatId;
+
+typedef struct {
+    uint8_t roll[STAT_COUNT]; /* the random part, 0..max */
+    uint8_t max[STAT_COUNT];
+    uint8_t stars[STAT_COUNT]; /* 1-3 each: 3 = the best possible roll */
+    uint8_t total_stars; /* 4..12 */
+    uint8_t overall; /* 1-3: 3 only when every stat is perfect */
+} EchoRating;
+
+uint8_t stat_stars(uint8_t roll, uint8_t max);
+void echo_rating(const uint8_t mac[6], EchoRating* out);
+const char* stat_name(uint8_t stat);
+
 /* One letter for compact lists: C, U, R, E, L. */
 char echo_rarity_letter(uint8_t rarity);
 /* ---------- Moves ---------- */

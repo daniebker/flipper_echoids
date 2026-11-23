@@ -455,6 +455,41 @@ static void test_active_hours(void) {
            (double)hours_by_rarity[RarityLegendary] / count_by_rarity[RarityLegendary]);
 }
 
+static void test_rating(void) {
+    CHECK(stat_stars(STAT_ROLL_MAX, STAT_ROLL_MAX) == 3);
+    CHECK(stat_stars(STAT_ROLL_MAX - 1, STAT_ROLL_MAX) == 2);
+    CHECK(stat_stars(STAT_ROLL_MAX / 2, STAT_ROLL_MAX) == 2);
+    CHECK(stat_stars(STAT_ROLL_MAX / 2 - 1, STAT_ROLL_MAX) == 1);
+    CHECK(stat_stars(0, STAT_HP_ROLL_MAX) == 1 && stat_stars(STAT_HP_ROLL_MAX, STAT_HP_ROLL_MAX) == 3);
+
+    uint32_t overall[4] = {0}, perfect_stats = 0, n = 200000;
+    for(uint32_t i = 0; i < n; i++) {
+        uint8_t m[6] = {0x77, (uint8_t)(i >> 16), (uint8_t)(i >> 8), (uint8_t)i, 0x12, 0x34};
+        EchoRating r;
+        echo_rating(m, &r);
+        EchoGenes g;
+        echo_genes(m, &g);
+        uint8_t total = 0;
+        for(int k = 0; k < STAT_COUNT; k++) {
+            CHECK(r.roll[k] <= r.max[k]);
+            CHECK(r.stars[k] >= 1 && r.stars[k] <= 3);
+            total += r.stars[k];
+            if(r.stars[k] == 3) perfect_stats++;
+        }
+        CHECK(r.total_stars == total);
+        /* 3 stars overall means nothing could be stronger */
+        CHECK((r.overall == 3) == (total == 12));
+        if(r.overall == 3) {
+            CHECK(g.base_hp == STAT_HP_FLOOR + STAT_HP_ROLL_MAX + g.rarity * 3);
+            CHECK(g.base_atk == STAT_FLOOR + STAT_ROLL_MAX + g.rarity * 2);
+        }
+        overall[r.overall]++;
+    }
+    printf("overall stars of %u: 1*=%u 2*=%u 3*=%u (perfect)\n", n, overall[1], overall[2], overall[3]);
+    CHECK(overall[1] > 0 && overall[2] > 0);
+    CHECK(overall[3] < n / 1000);
+}
+
 static void test_type_chart(void) {
     CHECK(echo_type_mult(EchoTypeTide, EchoTypeEmber) == 200);
     CHECK(echo_type_mult(EchoTypeEmber, EchoTypeTide) == 50);
@@ -536,6 +571,7 @@ int main(void) {
     test_tonics();
     test_names();
     test_active_hours();
+    test_rating();
     if(failures) {
         printf("%d failure(s)\n", failures);
         return 1;

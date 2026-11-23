@@ -108,7 +108,7 @@ typedef struct {
     char result_lines[RESULT_LINES_MAX][32];
     uint8_t result_count;
     uint8_t result_scroll;
-    bool detail_moves; /* detail screen shows the Moves page */
+    uint8_t detail_page; /* details screen page: DetailStats, DetailMoves, DetailRating */
     uint8_t ball_idx;
 
     /* Team screen: tab 0 = team, 1 = PAC. Indexes are positions in that list. */
@@ -323,6 +323,29 @@ static void draw_sprite(Canvas* canvas, const uint8_t mac[6], int x, int y, int 
             }
         }
     }
+}
+
+enum {
+    DetailStats,
+    DetailMoves,
+    DetailRating,
+    DetailPageCount,
+};
+
+/* 5x5 star, filled or outlined; y is the top row. */
+static void draw_star(Canvas* canvas, int x, int y, bool filled) {
+    static const uint8_t full[5] = {0x04, 0x0E, 0x1F, 0x0E, 0x0A};
+    static const uint8_t outline[5] = {0x04, 0x0A, 0x11, 0x0A, 0x0A};
+    const uint8_t* rows = filled ? full : outline;
+    for(int r = 0; r < 5; r++)
+        for(int c = 0; c < 5; c++)
+            if(rows[r] & (0x10 >> c)) canvas_draw_dot(canvas, x + c, y + r);
+}
+
+/* Three stars, the first `stars` filled; y is the text baseline it lines up with. */
+static void draw_stars(Canvas* canvas, int x, int baseline, uint8_t stars) {
+    for(uint8_t i = 0; i < 3; i++)
+        draw_star(canvas, x + i * 6, baseline - 6, i < stars);
 }
 
 /* Rarity badge: a letter (C U R E L); Epic and Legendary get a box so they
@@ -598,14 +621,12 @@ static void draw_collect(App* app, Canvas* canvas) {
         echo_stats(&wild, &st);
         char buf[40];
         canvas_draw_line(canvas, 0, 45, 127, 45);
-        snprintf(
-            buf,
-            sizeof(buf),
-            "%s %s %s",
-            echo_species_name(n->mac),
-            echo_rarity_name(g.rarity),
-            echo_type_name(g.type));
+        snprintf(buf, sizeof(buf), "%s %s", echo_species_name(n->mac), echo_rarity_name(g.rarity));
         canvas_draw_str(canvas, 2, 54, buf);
+        /* Star rating of its random stat rolls */
+        EchoRating rating;
+        echo_rating(n->mac, &rating);
+        draw_stars(canvas, 110, 54, rating.overall);
         snprintf(
             buf, sizeof(buf), "HP%u ATK%u DEF%u SPD%u", st.max_hp, st.atk, st.def, st.spd);
         canvas_draw_str(canvas, 2, 63, buf);
@@ -898,15 +919,35 @@ static void draw_detail(App* app, Canvas* canvas) {
     canvas_draw_str_aligned(canvas, 127, 9, AlignRight, AlignBottom, buf);
 
     draw_sprite(canvas, e->mac, 0, 12, 2);
-    snprintf(buf, sizeof(buf), "%s  %s", echo_type_name(g.type), echo_rarity_name(g.rarity));
+    EchoRating rating;
+    echo_rating(e->mac, &rating);
+    snprintf(buf, sizeof(buf), "%s %s", echo_type_name(g.type), echo_rarity_name(g.rarity));
     canvas_draw_str(canvas, 36, 19, buf);
+    draw_stars(canvas, 110, 19, rating.overall);
     snprintf(buf, sizeof(buf), "Lv%u  XP %u/%u", e->level, e->xp, echo_xp_to_next(e->level));
     canvas_draw_str(canvas, 36, 28, buf);
     snprintf(buf, sizeof(buf), "HP %u/%u", e->hp, s.max_hp);
     canvas_draw_str(canvas, 36, 37, buf);
     snprintf(buf, sizeof(buf), "A%u D%u S%u", s.atk, s.def, s.spd);
     canvas_draw_str(canvas, 36, 46, buf);
-    if(app->detail_moves) {
+    if(app->detail_page == DetailRating) {
+        /* Rating page: how good each random stat roll is. */
+        canvas_set_color(canvas, ColorWhite);
+        canvas_draw_box(canvas, 35, 11, 93, 53);
+        canvas_draw_box(canvas, 0, 46, 128, 18);
+        canvas_set_color(canvas, ColorBlack);
+        canvas_draw_str(canvas, 36, 19, rating.overall == 3 ? "PERFECT!" : "Rating");
+        draw_stars(canvas, 110, 19, rating.overall);
+        for(uint8_t i = 0; i < STAT_COUNT; i++) {
+            int y = 28 + i * 9;
+            canvas_draw_str(canvas, 36, y, stat_name(i));
+            snprintf(buf, sizeof(buf), "%u/%u", rating.roll[i], rating.max[i]);
+            canvas_draw_str(canvas, 60, y, buf);
+            draw_stars(canvas, 110, y, rating.stars[i]);
+        }
+        snprintf(buf, sizeof(buf), "Stars %u/%u  ^v stats", rating.total_stars, STAT_COUNT * 3);
+        canvas_draw_str(canvas, 0, 63, buf);
+    } else if(app->detail_page == DetailMoves) {
         /* Moves page replaces the stats area. */
         canvas_set_color(canvas, ColorWhite);
         canvas_draw_box(canvas, 35, 11, 93, 53);
@@ -945,7 +986,7 @@ static void draw_detail(App* app, Canvas* canvas) {
         else
             snprintf(buf, sizeof(buf), "%s", echo_species_name(e->mac));
         canvas_draw_str(canvas, 0, 54, buf);
-        canvas_draw_str(canvas, 0, 63, "^v moves  OK actions");
+        canvas_draw_str(canvas, 0, 63, "^v more pages  OK actions");
     }
 
     if(app->detail_menu) {
@@ -1116,6 +1157,9 @@ static const char* const help_lines[] = {
     "Fainted echoids don't heal:",
     "use a Revive Crystal first.",
     "* owned  x already fought",
+    "Stars rate an echoid's",
+    "random stats: 3 stars on",
+    "every stat = perfect.",
     "Rarity: C common, U uncom-",
     "mon, R rare, [E] epic,",
     "[L] legendary.",
@@ -2252,7 +2296,8 @@ static void detail_input(App* app, InputEvent* ev, bool press, int dy) {
             pac_refresh(app);
         }
     } else if(dy) {
-        app->detail_moves = !app->detail_moves; /* Stats <-> Moves page */
+        /* Stats -> Moves -> Rating pages */
+        app->detail_page = (uint8_t)((app->detail_page + DetailPageCount + dy) % DetailPageCount);
     } else if(press && ev->key == InputKeyOk) {
         app->detail_menu = true;
         app->detail_menu_idx = 0;
