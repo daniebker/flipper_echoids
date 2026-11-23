@@ -40,6 +40,9 @@ typedef enum {
     ScreenBag,
     ScreenSettings,
     ScreenHelp,
+    ScreenBoard,
+    ScreenTerminal,
+    ScreenCalibrate,
 } Screen;
 
 typedef enum {
@@ -94,6 +97,19 @@ typedef struct {
     bool confirm_reset;
     uint8_t help_scroll;
 
+    /* Board setup / debug */
+    uint8_t board_idx;
+    uint8_t board_scroll;
+    uint8_t term_cmd;
+    bool term_otg_by_us;
+    uint8_t cal_step; /* 0 = warm-up, 1..N = candidate, N+1 = done */
+    uint32_t cal_tick;
+    bool cal_sent;
+    bool cal_otg_by_us;
+    int32_t cal_best_score;
+    int16_t cal_best;
+    char cal_result[32];
+
     char toast[40];
     uint32_t toast_until;
 } App;
@@ -120,12 +136,26 @@ static bool app_owns(App* app, const uint8_t mac[6]) {
 }
 
 static void app_new_game(App* app) {
+    /* Keep the board configuration when starting over. */
+    SaveData old = app->save;
+    bool keep = old.magic == SAVE_MAGIC;
     memset(&app->save, 0, sizeof(app->save));
     app->save.magic = SAVE_MAGIC;
     app->save.version = SAVE_VERSION;
     app->save.source = ScanSourceBoard;
     app->save.uart = ScanUartUsart;
     app->save.bt_enabled = 1;
+    if(keep) {
+        app->save.source = old.source;
+        app->save.uart = old.uart;
+        app->save.bt_enabled = old.bt_enabled;
+        app->save.baud_idx = old.baud_idx;
+        app->save.power = old.power;
+        app->save.boot_idx = old.boot_idx;
+        app->save.eol = old.eol;
+        app->save.wifi_cmd = old.wifi_cmd;
+        app->save.bt_cmd = old.bt_cmd;
+    }
 
     /* The starter is born from this Flipper's own Bluetooth MAC. */
     const uint8_t* mac = furi_hal_version_get_ble_mac();
@@ -134,6 +164,18 @@ static void app_new_game(App* app) {
     app->save.team_count = 1;
     app->save.lead = 0;
     app->dirty = true;
+}
+
+static void app_scan_config(App* app, ScanConfig* cfg) {
+    memset(cfg, 0, sizeof(*cfg));
+    cfg->uart = app->save.uart % ScanUartCount;
+    cfg->baud_idx = app->save.baud_idx % scanner_baud_count;
+    cfg->power = app->save.power % ScanPowerCount;
+    cfg->boot_idx = app->save.boot_idx % scanner_boot_count;
+    cfg->eol = app->save.eol & 1;
+    cfg->wifi_cmd = app->save.wifi_cmd % scanner_wifi_cmd_count;
+    cfg->bt_cmd = app->save.bt_cmd % scanner_bt_cmd_count;
+    cfg->bt_enabled = app->save.bt_enabled;
 }
 
 static void app_save(App* app) {
@@ -272,15 +314,30 @@ static void draw_collect(App* app, Canvas* canvas) {
         const char* err = scanner_error(app->scanner);
         uint32_t waited = furi_get_tick() - app->scan_started;
         if(err) {
-            canvas_draw_str_aligned(canvas, 64, 30, AlignCenter, AlignCenter, err);
+            canvas_draw_str_aligned(canvas, 64, 26, AlignCenter, AlignCenter, err);
+            canvas_draw_str_aligned(canvas, 64, 38, AlignCenter, AlignCenter, "Settings > Board setup");
+        } else if(scanner_booting(app->scanner)) {
+            canvas_draw_str_aligned(canvas, 64, 32, AlignCenter, AlignCenter, "Powering up board...");
         } else if(
             !scanner_board_alive(app->scanner) &&
             waited > furi_ms_to_ticks(BOARD_TIMEOUT_MS)) {
             canvas_draw_str_aligned(canvas, 64, 26, AlignCenter, AlignCenter, "No data from board");
-            canvas_draw_str_aligned(canvas, 64, 37, AlignCenter, AlignCenter, "Check Marauder FW/UART");
-            canvas_draw_str_aligned(canvas, 64, 47, AlignCenter, AlignCenter, "or use Demo in Settings");
+            canvas_draw_str_aligned(canvas, 64, 37, AlignCenter, AlignCenter, "Try Settings > Board");
+            canvas_draw_str_aligned(canvas, 64, 47, AlignCenter, AlignCenter, "setup > Terminal");
         } else {
-            canvas_draw_str_aligned(canvas, 64, 32, AlignCenter, AlignCenter, "Listening for echoes...");
+            ScanStats st;
+            scanner_get_stats(app->scanner, &st);
+            canvas_draw_str_aligned(canvas, 64, 28, AlignCenter, AlignCenter, "Listening for echoes...");
+            if(app->save.source == ScanSourceBoard) {
+                char info[32];
+                snprintf(
+                    info,
+                    sizeof(info),
+                    "rx %lu  lines %lu",
+                    (unsigned long)st.rx_bytes,
+                    (unsigned long)st.lines);
+                canvas_draw_str_aligned(canvas, 64, 40, AlignCenter, AlignCenter, info);
+            }
         }
     }
 
@@ -493,19 +550,22 @@ static void draw_bag(App* app, Canvas* canvas) {
     draw_toast(app, canvas);
 }
 
+#define SETTINGS_COUNT 3
+
 static void draw_settings(App* app, Canvas* canvas) {
     draw_title(canvas, "Settings", NULL);
-    const char* lines[5];
-    char l0[24], l1[24], l2[24];
-    snprintf(l0, sizeof(l0), "Source: %s", app->save.source == ScanSourceDemo ? "Demo" : "ESP32 board");
-    snprintf(l1, sizeof(l1), "UART: %s", app->save.uart == ScanUartLpuart ? "15/16 LPUART" : "13/14 USART");
-    snprintf(l2, sizeof(l2), "Bluetooth: %s", app->save.bt_enabled ? "On" : "Off");
-    lines[0] = l0;
-    lines[1] = l1;
-    lines[2] = l2;
-    lines[3] = "How to play";
-    lines[4] = app->confirm_reset ? "Reset? OK again!" : "Reset game";
-    for(uint8_t i = 0; i < 5; i++) {
+    char l0[32];
+    snprintf(
+        l0,
+        sizeof(l0),
+        "Board setup (%s)",
+        app->save.source == ScanSourceDemo ? "Demo" : "ESP32");
+    const char* lines[SETTINGS_COUNT] = {
+        l0,
+        "How to play",
+        app->confirm_reset ? "Reset? OK again!" : "Reset game",
+    };
+    for(uint8_t i = 0; i < SETTINGS_COUNT; i++) {
         int y = 22 + i * 10;
         draw_row(canvas, y, i == app->settings_idx);
         canvas_draw_str(canvas, 4, y, lines[i]);
@@ -542,6 +602,14 @@ static const char* const help_lines[] = {
     "HP regenerates slowly, or",
     "use a Tonic from the Bag.",
     "* owned  x already fought",
+    "",
+    "BOARD NOT WORKING?",
+    "Settings > Board setup >",
+    "Terminal shows raw UART.",
+    "Up/Down there changes the",
+    "UART pins / baud live.",
+    "Auto-calibrate tries all.",
+    "Wire board TX->Flipper RX.",
 };
 #define HELP_COUNT (sizeof(help_lines) / sizeof(help_lines[0]))
 #define HELP_ROWS  6
@@ -555,6 +623,10 @@ static void draw_help(App* app, Canvas* canvas) {
     }
     elements_scrollbar(canvas, app->help_scroll, HELP_COUNT - HELP_ROWS + 1);
 }
+
+static void draw_board(App* app, Canvas* canvas);
+static void draw_terminal(App* app, Canvas* canvas);
+static void draw_calibrate(App* app, Canvas* canvas);
 
 static void draw_callback(Canvas* canvas, void* ctx) {
     App* app = ctx;
@@ -595,6 +667,15 @@ static void draw_callback(Canvas* canvas, void* ctx) {
     case ScreenHelp:
         draw_help(app, canvas);
         break;
+    case ScreenBoard:
+        draw_board(app, canvas);
+        break;
+    case ScreenTerminal:
+        draw_terminal(app, canvas);
+        break;
+    case ScreenCalibrate:
+        draw_calibrate(app, canvas);
+        break;
     }
     furi_mutex_release(app->mutex);
 }
@@ -622,17 +703,446 @@ static void list_move(uint8_t* idx, uint8_t* scroll, uint8_t count, uint8_t rows
     if(*idx >= *scroll + rows) *scroll = *idx - rows + 1;
 }
 
+/* ------------------------------------------------------------------------- */
+/* Board setup, terminal and calibration                                     */
+/* ------------------------------------------------------------------------- */
+
+enum {
+    BoardSource,
+    BoardUart,
+    BoardBaud,
+    BoardPower,
+    BoardBoot,
+    BoardEol,
+    BoardWifiCmd,
+    BoardBtCmd,
+    BoardBt,
+    BoardTerminal,
+    BoardCalibrate,
+    BoardCount,
+};
+#define BOARD_ROWS 5
+
+static const char* const term_cmds[] = {
+    "help",
+    "scanap",
+    "sniffbt",
+    "stopscan",
+    "scanall",
+    "list -a",
+    "clearlist -a",
+    "reboot",
+};
+#define TERM_CMD_COUNT (sizeof(term_cmds) / sizeof(term_cmds[0]))
+
+static const char* uart_short(uint8_t uart) {
+    return uart == ScanUartLpuart ? "L15/16" : "U13/14";
+}
+
+static void board_row_text(App* app, uint8_t row, char* buf, size_t len) {
+    SaveData* sv = &app->save;
+    switch(row) {
+    case BoardSource:
+        snprintf(buf, len, "Source: %s", sv->source == ScanSourceDemo ? "Demo" : "ESP32 board");
+        break;
+    case BoardUart:
+        snprintf(buf, len, "Pins: %s", scanner_uart_name(sv->uart % ScanUartCount));
+        break;
+    case BoardBaud:
+        snprintf(
+            buf, len, "Baud: %lu", (unsigned long)scanner_baud_rates[sv->baud_idx % scanner_baud_count]);
+        break;
+    case BoardPower:
+        snprintf(buf, len, "5V power: %s", scanner_power_name(sv->power % ScanPowerCount));
+        break;
+    case BoardBoot:
+        snprintf(
+            buf,
+            len,
+            "Boot wait: %u ms",
+            scanner_boot_waits_ms[sv->boot_idx % scanner_boot_count]);
+        break;
+    case BoardEol:
+        snprintf(buf, len, "Line end: %s", sv->eol ? "CR+LF" : "LF");
+        break;
+    case BoardWifiCmd:
+        snprintf(buf, len, "WiFi cmd: %s", scanner_wifi_cmds[sv->wifi_cmd % scanner_wifi_cmd_count]);
+        break;
+    case BoardBtCmd:
+        snprintf(buf, len, "BT cmd: %s", scanner_bt_cmds[sv->bt_cmd % scanner_bt_cmd_count]);
+        break;
+    case BoardBt:
+        snprintf(buf, len, "Bluetooth scan: %s", sv->bt_enabled ? "On" : "Off");
+        break;
+    case BoardTerminal:
+        snprintf(buf, len, "> UART terminal");
+        break;
+    case BoardCalibrate:
+        snprintf(buf, len, "> Auto-calibrate");
+        break;
+    default:
+        buf[0] = '\0';
+    }
+}
+
+static uint8_t cycle(uint8_t value, size_t count, int delta) {
+    return (uint8_t)(((int)(value % count) + (int)count + delta) % (int)count);
+}
+
+static void board_change(App* app, uint8_t row, int delta) {
+    SaveData* sv = &app->save;
+    switch(row) {
+    case BoardSource:
+        sv->source = sv->source == ScanSourceDemo ? ScanSourceBoard : ScanSourceDemo;
+        break;
+    case BoardUart:
+        sv->uart = cycle(sv->uart, ScanUartCount, delta);
+        break;
+    case BoardBaud:
+        sv->baud_idx = cycle(sv->baud_idx, scanner_baud_count, delta);
+        break;
+    case BoardPower:
+        sv->power = cycle(sv->power, ScanPowerCount, delta);
+        break;
+    case BoardBoot:
+        sv->boot_idx = cycle(sv->boot_idx, scanner_boot_count, delta);
+        break;
+    case BoardEol:
+        sv->eol = !sv->eol;
+        break;
+    case BoardWifiCmd:
+        sv->wifi_cmd = cycle(sv->wifi_cmd, scanner_wifi_cmd_count, delta);
+        break;
+    case BoardBtCmd:
+        sv->bt_cmd = cycle(sv->bt_cmd, scanner_bt_cmd_count, delta);
+        break;
+    case BoardBt:
+        sv->bt_enabled = !sv->bt_enabled;
+        break;
+    default:
+        return;
+    }
+    app->dirty = true;
+}
+
+static void draw_board(App* app, Canvas* canvas) {
+    draw_title(canvas, "Board setup", "<> change");
+    char buf[32];
+    for(uint8_t r = 0; r < BOARD_ROWS; r++) {
+        uint8_t i = app->board_scroll + r;
+        if(i >= BoardCount) break;
+        int y = 22 + r * 10;
+        draw_row(canvas, y, i == app->board_idx);
+        board_row_text(app, i, buf, sizeof(buf));
+        canvas_draw_str(canvas, 3, y, buf);
+    }
+    canvas_set_color(canvas, ColorBlack);
+    elements_scrollbar_pos(canvas, 127, 14, 48, app->board_idx, BoardCount);
+    draw_toast(app, canvas);
+}
+
+/* --- terminal --- */
+
+static void terminal_open(App* app) {
+    ScanConfig cfg;
+    app_scan_config(app, &cfg);
+    scanner_start_manual(app->scanner, &cfg);
+}
+
+static void terminal_close(App* app) {
+    scanner_stop(app->scanner);
+    if(app->term_otg_by_us) {
+        scanner_power_off();
+        app->term_otg_by_us = false;
+    }
+}
+
+static void draw_terminal(App* app, Canvas* canvas) {
+    char buf[40];
+    ScanStats st;
+    scanner_get_stats(app->scanner, &st);
+
+    canvas_set_font(canvas, FontSecondary);
+    snprintf(
+        buf,
+        sizeof(buf),
+        "^%s v%lu",
+        uart_short(app->save.uart),
+        (unsigned long)scanner_baud_rates[app->save.baud_idx % scanner_baud_count]);
+    canvas_draw_str(canvas, 0, 7, buf);
+    canvas_draw_str_aligned(
+        canvas, 127, 7, AlignRight, AlignBottom, furi_hal_power_is_otg_enabled() ? "5V on" : "5V off");
+
+    canvas_set_font(canvas, FontKeyboard);
+    snprintf(
+        buf,
+        sizeof(buf),
+        "rx%lu bad%lu ap%lu bt%lu",
+        (unsigned long)st.rx_bytes,
+        (unsigned long)st.rx_garbage,
+        (unsigned long)st.aps,
+        (unsigned long)st.bts);
+    canvas_draw_str(canvas, 0, 15, buf);
+    canvas_draw_line(canvas, 0, 17, 127, 17);
+
+    const char* err = scanner_error(app->scanner);
+    if(!scanner_is_running(app->scanner)) {
+        canvas_draw_str(canvas, 0, 26, err ? err : "UART closed");
+    } else {
+        char log[SCAN_LOG_LINES][SCAN_LOG_LEN];
+        size_t n = scanner_get_log(app->scanner, log);
+        size_t first = n > 5 ? n - 5 : 0;
+        for(size_t i = first; i < n; i++) {
+            canvas_draw_str(canvas, 0, 25 + (int)(i - first) * 7, log[i]);
+        }
+    }
+
+    canvas_set_font(canvas, FontSecondary);
+    canvas_draw_box(canvas, 0, 55, 128, 9);
+    canvas_set_color(canvas, ColorWhite);
+    snprintf(buf, sizeof(buf), "< %s >  OK:send", term_cmds[app->term_cmd % TERM_CMD_COUNT]);
+    canvas_draw_str_aligned(canvas, 64, 63, AlignCenter, AlignBottom, buf);
+    canvas_set_color(canvas, ColorBlack);
+}
+
+static void terminal_input(App* app, InputEvent* ev, bool press) {
+    if(press && ev->key == InputKeyLeft) {
+        app->term_cmd = cycle(app->term_cmd, TERM_CMD_COUNT, -1);
+    } else if(press && ev->key == InputKeyRight) {
+        app->term_cmd = cycle(app->term_cmd, TERM_CMD_COUNT, 1);
+    } else if(press && ev->key == InputKeyOk) {
+        scanner_send_cmd(app->scanner, term_cmds[app->term_cmd % TERM_CMD_COUNT]);
+    } else if(ev->type == InputTypeLong && ev->key == InputKeyOk) {
+        /* Manual 5V toggle for debugging power issues. */
+        if(furi_hal_power_is_otg_enabled()) {
+            scanner_power_off();
+            app->term_otg_by_us = false;
+        } else {
+            app->term_otg_by_us = scanner_power_on();
+        }
+    } else if(press && (ev->key == InputKeyUp || ev->key == InputKeyDown)) {
+        /* Change pins / baud on the fly and reopen the UART. */
+        if(ev->key == InputKeyUp)
+            app->save.uart = cycle(app->save.uart, ScanUartCount, 1);
+        else
+            app->save.baud_idx = cycle(app->save.baud_idx, scanner_baud_count, 1);
+        app->dirty = true;
+        terminal_open(app);
+    } else if(press && ev->key == InputKeyBack) {
+        terminal_close(app);
+        app->screen = ScreenBoard;
+        if(app->dirty) app_save(app);
+    }
+}
+
+/* --- calibration: try every pin / baud combination and keep the best --- */
+
+#define CAL_CANDIDATES  ((uint8_t)(ScanUartCount * scanner_baud_count))
+#define CAL_LISTEN_MS   1500
+#define CAL_GOOD_SCORE  40
+#define CAL_GREAT_SCORE 400
+
+static bool calibrate_done(App* app) {
+    return app->cal_step > CAL_CANDIDATES;
+}
+
+static void calibrate_candidate(uint8_t k, uint8_t* uart, uint8_t* baud_idx) {
+    *uart = k / scanner_baud_count;
+    *baud_idx = k % scanner_baud_count;
+}
+
+static void calibrate_start(App* app) {
+    scanner_stop(app->scanner);
+    app->cal_step = 0;
+    app->cal_best = -1;
+    app->cal_best_score = INT32_MIN;
+    app->cal_result[0] = '\0';
+    app->cal_otg_by_us = false;
+    uint32_t wait = 0;
+    if(app->save.power % ScanPowerCount != ScanPowerUntouched) {
+        app->cal_otg_by_us = scanner_power_on();
+        if(app->cal_otg_by_us) wait = scanner_boot_waits_ms[app->save.boot_idx % scanner_boot_count];
+    }
+    app->cal_tick = furi_get_tick() + furi_ms_to_ticks(wait);
+}
+
+static void calibrate_stop(App* app) {
+    scanner_stop(app->scanner);
+    if(app->cal_otg_by_us && app->save.power % ScanPowerCount == ScanPowerAuto) {
+        scanner_power_off();
+    }
+    app->cal_otg_by_us = false;
+}
+
+static void calibrate_open(App* app) {
+    ScanConfig cfg;
+    app_scan_config(app, &cfg);
+    calibrate_candidate(app->cal_step - 1, &cfg.uart, &cfg.baud_idx);
+    cfg.power = ScanPowerUntouched; /* power is handled by calibration itself */
+    app->cal_sent = false;
+    app->cal_tick = furi_get_tick();
+    scanner_start_manual(app->scanner, &cfg);
+}
+
+static void calibrate_finish(App* app) {
+    app->cal_step = CAL_CANDIDATES + 1;
+    scanner_stop(app->scanner);
+    if(app->cal_best >= 0 && app->cal_best_score >= CAL_GOOD_SCORE) {
+        uint8_t uart, baud;
+        calibrate_candidate((uint8_t)app->cal_best, &uart, &baud);
+        app->save.uart = uart;
+        app->save.baud_idx = baud;
+        app->save.source = ScanSourceBoard;
+        app->dirty = true;
+        app_save(app);
+        snprintf(
+            app->cal_result,
+            sizeof(app->cal_result),
+            "%s @%lu",
+            uart_short(uart),
+            (unsigned long)scanner_baud_rates[baud]);
+        notification_message(app->notif, &sequence_success);
+    } else {
+        app->cal_result[0] = '\0';
+        notification_message(app->notif, &sequence_error);
+    }
+    if(app->cal_otg_by_us && app->save.power % ScanPowerCount == ScanPowerAuto) {
+        scanner_power_off();
+        app->cal_otg_by_us = false;
+    }
+}
+
+static void calibrate_tick(App* app) {
+    if(calibrate_done(app)) return;
+    uint32_t now = furi_get_tick();
+    if(app->cal_step == 0) {
+        if((int32_t)(now - app->cal_tick) >= 0) {
+            app->cal_step = 1;
+            calibrate_open(app);
+        }
+        return;
+    }
+    if(!scanner_is_running(app->scanner)) {
+        /* Could not open this combination (busy / unsupported baud): skip it. */
+        if(++app->cal_step > CAL_CANDIDATES)
+            calibrate_finish(app);
+        else
+            calibrate_open(app);
+        return;
+    }
+    if(!app->cal_sent && now - app->cal_tick > furi_ms_to_ticks(150)) {
+        scanner_send_cmd(app->scanner, "help");
+        app->cal_sent = true;
+    }
+    if(now - app->cal_tick < furi_ms_to_ticks(CAL_LISTEN_MS)) return;
+
+    ScanStats st;
+    scanner_get_stats(app->scanner, &st);
+    int32_t score = (int32_t)st.rx_printable + 40 * (int32_t)st.lines - 8 * (int32_t)st.rx_garbage;
+    if(st.rx_bytes > 0 && score > app->cal_best_score) {
+        app->cal_best_score = score;
+        app->cal_best = (int16_t)(app->cal_step - 1);
+    }
+    scanner_stop(app->scanner);
+    if(score >= CAL_GREAT_SCORE || app->cal_step >= CAL_CANDIDATES) {
+        calibrate_finish(app);
+    } else {
+        app->cal_step++;
+        calibrate_open(app);
+    }
+}
+
+static void draw_calibrate(App* app, Canvas* canvas) {
+    draw_title(canvas, "Auto-calibrate", NULL);
+    char buf[40];
+    if(calibrate_done(app)) {
+        if(app->cal_result[0]) {
+            canvas_draw_str(canvas, 2, 24, "Board found and saved:");
+            canvas_set_font(canvas, FontPrimary);
+            canvas_draw_str(canvas, 2, 36, app->cal_result);
+            canvas_set_font(canvas, FontSecondary);
+        } else {
+            canvas_draw_str(canvas, 2, 22, "No board answered.");
+            canvas_draw_str(canvas, 2, 31, "Check: Marauder flashed,");
+            canvas_draw_str(canvas, 2, 40, "board TX->Flipper RX, GND,");
+            canvas_draw_str(canvas, 2, 49, "power (5V setting).");
+        }
+        elements_button_center(canvas, "OK");
+        return;
+    }
+    if(app->cal_step == 0) {
+        canvas_draw_str(canvas, 2, 26, "Powering board, waiting");
+        canvas_draw_str(canvas, 2, 36, "for it to boot...");
+    } else {
+        uint8_t uart, baud;
+        calibrate_candidate(app->cal_step - 1, &uart, &baud);
+        snprintf(
+            buf,
+            sizeof(buf),
+            "Trying %s @%lu",
+            uart_short(uart),
+            (unsigned long)scanner_baud_rates[baud]);
+        canvas_draw_str(canvas, 2, 24, buf);
+        ScanStats st;
+        scanner_get_stats(app->scanner, &st);
+        snprintf(
+            buf,
+            sizeof(buf),
+            "rx %lu  bad %lu  lines %lu",
+            (unsigned long)st.rx_bytes,
+            (unsigned long)st.rx_garbage,
+            (unsigned long)st.lines);
+        canvas_draw_str(canvas, 2, 34, buf);
+        if(app->cal_best >= 0) {
+            calibrate_candidate((uint8_t)app->cal_best, &uart, &baud);
+            snprintf(
+                buf,
+                sizeof(buf),
+                "Best: %s @%lu",
+                uart_short(uart),
+                (unsigned long)scanner_baud_rates[baud]);
+            canvas_draw_str(canvas, 2, 44, buf);
+        }
+        elements_progress_bar(
+            canvas, 2, 50, 124, (float)(app->cal_step - 1) / (float)CAL_CANDIDATES);
+    }
+}
+
+static void board_input(App* app, InputEvent* ev, bool press, int dy) {
+    if(dy) {
+        list_move(&app->board_idx, &app->board_scroll, BoardCount, BOARD_ROWS, dy);
+    } else if(press && (ev->key == InputKeyLeft || ev->key == InputKeyRight)) {
+        board_change(app, app->board_idx, ev->key == InputKeyLeft ? -1 : 1);
+    } else if(press && ev->key == InputKeyOk) {
+        if(app->board_idx == BoardTerminal) {
+            if(app->save.source == ScanSourceDemo) {
+                app_toast(app, "Set Source to ESP32 first");
+            } else {
+                app->term_otg_by_us = false;
+                terminal_open(app);
+                app->screen = ScreenTerminal;
+            }
+        } else if(app->board_idx == BoardCalibrate) {
+            calibrate_start(app);
+            app->screen = ScreenCalibrate;
+        } else {
+            board_change(app, app->board_idx, 1);
+        }
+    } else if(press && ev->key == InputKeyBack) {
+        app->screen = ScreenSettings;
+        if(app->dirty) app_save(app);
+    }
+}
+
 static void collect_start(App* app) {
     for(uint8_t i = 0; i < app->nearby_count; i++) {
         if(app->nearby[i].state == NearbyWild && app_owns(app, app->nearby[i].mac))
             app->nearby[i].state = NearbyOwned;
     }
     app->scan_started = furi_get_tick();
-    if(!scanner_start(
-           app->scanner,
-           (ScanSource)app->save.source,
-           (ScanUart)app->save.uart,
-           app->save.bt_enabled)) {
+    ScanConfig cfg;
+    app_scan_config(app, &cfg);
+    if(!scanner_start(app->scanner, (ScanSource)app->save.source, &cfg)) {
         app_toast(app, scanner_error(app->scanner) ? scanner_error(app->scanner) : "Scanner error");
         notification_message(app->notif, &sequence_error);
     }
@@ -978,25 +1488,19 @@ static void handle_input(App* app, InputEvent* ev) {
 
     case ScreenSettings:
         if(dy) {
-            app->settings_idx = (uint8_t)((app->settings_idx + 5 + dy) % 5);
+            app->settings_idx =
+                (uint8_t)((app->settings_idx + SETTINGS_COUNT + dy) % SETTINGS_COUNT);
             app->confirm_reset = false;
         } else if(press && ev->key == InputKeyOk) {
             switch(app->settings_idx) {
             case 0:
-                app->save.source = app->save.source == ScanSourceDemo ? ScanSourceBoard :
-                                                                         ScanSourceDemo;
+                app->screen = ScreenBoard;
                 break;
             case 1:
-                app->save.uart = app->save.uart == ScanUartUsart ? ScanUartLpuart : ScanUartUsart;
-                break;
-            case 2:
-                app->save.bt_enabled = !app->save.bt_enabled;
-                break;
-            case 3:
                 app->help_scroll = 0;
                 app->screen = ScreenHelp;
                 break;
-            case 4:
+            case 2:
                 if(!app->confirm_reset) {
                     app->confirm_reset = true;
                 } else {
@@ -1010,11 +1514,25 @@ static void handle_input(App* app, InputEvent* ev) {
                 }
                 break;
             }
-            if(app->settings_idx <= 2) app->dirty = true;
         } else if(press && ev->key == InputKeyBack) {
             app->confirm_reset = false;
             app->screen = ScreenMenu;
             if(app->dirty) app_save(app);
+        }
+        break;
+
+    case ScreenBoard:
+        board_input(app, ev, press, dy);
+        break;
+
+    case ScreenTerminal:
+        terminal_input(app, ev, press);
+        break;
+
+    case ScreenCalibrate:
+        if(press && (ev->key == InputKeyBack || (ev->key == InputKeyOk && calibrate_done(app)))) {
+            calibrate_stop(app);
+            app->screen = ScreenBoard;
         }
         break;
 
@@ -1039,12 +1557,16 @@ static void app_tick(App* app) {
     uint32_t now = furi_get_tick();
 
     ScanEvent ev;
+    bool debug = app->screen == ScreenTerminal || app->screen == ScreenCalibrate;
     for(int i = 0; i < 8 && scanner_poll(app->scanner, &ev); i++) {
+        if(debug) continue; /* counted in the scanner stats only */
         if(ev.type == ScanEventAp)
             handle_ap(app, &ev);
         else
             handle_bt(app, &ev);
     }
+
+    if(app->screen == ScreenCalibrate) calibrate_tick(app);
 
     bool in_battle = app->screen == ScreenBattle || app->screen == ScreenBallPick;
     if(now - app->last_regen >= furi_ms_to_ticks(REGEN_MS)) {

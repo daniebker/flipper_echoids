@@ -2,6 +2,7 @@
 
 #include <furi.h>
 #include <storage/storage.h>
+#include <string.h>
 
 #define SAVE_PATH APP_DATA_PATH("save.bin")
 
@@ -9,14 +10,25 @@ bool save_load(SaveData* data) {
     Storage* storage = furi_record_open(RECORD_STORAGE);
     File* file = storage_file_alloc(storage);
     bool ok = false;
+    size_t read = 0;
+    memset(data, 0, sizeof(SaveData));
     if(storage_file_open(file, SAVE_PATH, FSAM_READ, FSOM_OPEN_EXISTING)) {
-        ok = storage_file_read(file, data, sizeof(SaveData)) == sizeof(SaveData);
+        read = storage_file_read(file, data, sizeof(SaveData));
     }
     storage_file_close(file);
     storage_file_free(file);
     furi_record_close(RECORD_STORAGE);
 
-    if(ok && (data->magic != SAVE_MAGIC || data->version != SAVE_VERSION)) ok = false;
+    if(data->magic == SAVE_MAGIC) {
+        if(data->version == SAVE_VERSION && read == sizeof(SaveData)) {
+            ok = true;
+        } else if(data->version == 1 && read >= SAVE_V1_SIZE) {
+            /* Upgrade: new board settings start at their zero defaults. */
+            memset((uint8_t*)data + SAVE_V1_SIZE, 0, sizeof(SaveData) - SAVE_V1_SIZE);
+            data->version = SAVE_VERSION;
+            ok = true;
+        }
+    }
     if(ok && (data->team_count == 0 || data->team_count > MAX_TEAM)) ok = false;
     if(ok && data->lead >= data->team_count) data->lead = 0;
     if(ok && data->seen_bt_count > SEEN_BT_MAX) data->seen_bt_count = SEEN_BT_MAX;

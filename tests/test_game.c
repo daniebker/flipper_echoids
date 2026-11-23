@@ -155,12 +155,19 @@ static void test_type_chart(void) {
 
 static void test_parser(void) {
     ScanEvent ev;
+    uint8_t first_ap[6];
     CHECK(scanner_parse_line("RSSI: -61 Ch: 6 BSSID: a4:2b:b0:11:22:33 ESSID: CoffeeBar", ScanPhaseWifi, &ev));
     CHECK(ev.type == ScanEventAp && ev.rssi == -61 && ev.mac[0] == 0xA4 && ev.mac[5] == 0x33);
     CHECK(strcmp(ev.name, "CoffeeBar") == 0);
     CHECK(scanner_parse_line("RSSI: -70 Ch: 1 BSSID: a4:2b:b0:11:22:34 ESSID: ", ScanPhaseWifi, &ev));
     CHECK(strcmp(ev.name, "<hidden>") == 0);
     CHECK(!scanner_parse_line("Starting AP scan. Stop with stopscan", ScanPhaseWifi, &ev));
+    /* Marauder builds that print no BSSID still give a stable ID from the SSID */
+    CHECK(scanner_parse_line("-58 Ch: 11 ESSID: HomeNet", ScanPhaseWifi, &ev));
+    memcpy(first_ap, ev.mac, 6);
+    CHECK(ev.type == ScanEventAp && strcmp(ev.name, "HomeNet") == 0);
+    CHECK(scanner_parse_line("-70 Ch: 11 ESSID: HomeNet", ScanPhaseWifi, &ev));
+    CHECK(memcmp(first_ap, ev.mac, 6) == 0);
     CHECK(scanner_parse_line("Device: 5c:f3:70:aa:bb:cc", ScanPhaseBt, &ev));
     CHECK(ev.type == ScanEventBt && ev.mac[0] == 0x5C);
     uint8_t first[6];

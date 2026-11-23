@@ -26,8 +26,8 @@ devices. Echoids gets both from an ESP32 board on the GPIO header that runs
 | ESP32 / ESP32-S3 boards (e.g. WROOM-based Marauder boards) | ✅ | ✅ |
 
 - The default UART is **USART on pins 13 (TX) and 14 (RX)**, which is what the WiFi
-  Devboard uses. You can switch to LPUART on pins 15 and 16 in Settings.
-- The baud rate is 115200.
+  Devboard uses. You can switch to LPUART on pins 15 and 16 in **Settings → Board setup**.
+- The default baud rate is 115200. You can change it in Board setup.
 - The app turns on 5V on the GPIO header while scanning and turns it off again when
   you leave Collect mode.
 
@@ -45,7 +45,7 @@ AP,aa:bb:cc:dd:ee:ff,-60,MyNetwork
 BT,11:22:33:44:55:66,-70,MyHeadphones
 ```
 
-**No board?** Set **Settings → Source → Demo**. The app then makes simulated sightings
+**No board?** Set **Settings → Board setup → Source → Demo**. The app then makes simulated sightings
 from a fixed pool of fake devices, so you can play and test without hardware.
 
 ## How to play
@@ -57,7 +57,7 @@ from a fixed pool of fake devices, so you can play and test without hardware.
 | **Team** | Lists your echoids. **OK** opens one's details, **←/→** browses, and **OK** on the details screen makes it your lead (the echoid that fights). |
 | **Craft** | `+` marks recipes you can afford. **OK** crafts one. |
 | **Bag** | **←/→** switches between Items and Shards. **OK** uses a Tonic or Echo Crystal on your lead. |
-| **Settings** | Scan source, UART pins, Bluetooth on/off, an in-app guide, and reset. |
+| **Settings** | Board setup (see below), an in-app guide, and reset. |
 
 ### Types
 
@@ -91,6 +91,49 @@ most of. Cheaper tiers are used first.
 - HP comes back at 1 point every 5 seconds outside battle. A Tonic heals your lead fully.
 
 Progress is saved to `/ext/apps_data/echoids/save.bin`.
+
+## Board setup and troubleshooting
+
+**Settings → Board setup** lists the connection options. Use **←/→** (or **OK**) to change
+the selected value. Changes are saved straight away.
+
+| Option | What it does |
+|---|---|
+| Source | ESP32 board or Demo (simulated) |
+| Pins | `USART 13/14` (WiFi Devboard) or `LPUART 15/16` |
+| Baud | 115200 (Marauder default), 230400, 460800, 921600, 57600, 38400, 9600 |
+| 5V power | **Auto** turns 5V on while scanning and off afterwards. **Keep on** leaves it on. **Don't touch** never changes it (use this if the board has its own USB power) |
+| Boot wait | How long to wait after turning on 5V before sending commands (the ESP32 needs about 1–2 s to boot) |
+| Line end | `LF` or `CR+LF` after each command |
+| WiFi cmd / BT cmd | The Marauder commands used for scanning (`scanap` / `scanall`, `sniffbt`) |
+| Bluetooth scan | Turns the Bluetooth half of the scan cycle on or off |
+| **UART terminal** | A live view of the raw UART traffic, for debugging |
+| **Auto-calibrate** | Tries every pin and baud combination and saves the one the board answers on |
+
+**UART terminal** controls:
+
+- The header shows the current pins and baud, and whether 5V is on.
+- The second line counts bytes received (`rx`), unreadable bytes (`bad`), and the WiFi
+  (`ap`) and Bluetooth (`bt`) sightings the parser understood.
+- The log shows the last lines received. Lines starting with `>` were sent by the
+  Flipper and lines starting with `#` are status messages.
+- **←/→** chooses a command (`help`, `scanap`, `sniffbt`, `stopscan`, `scanall`,
+  `list -a`, `clearlist -a`, `reboot`) and **OK** sends it.
+- **↑** switches the pins and **↓** steps through the baud rates. The UART reopens
+  straight away and the change is saved.
+- **Hold OK** turns 5V on or off by hand.
+
+**What the terminal tells you:**
+
+| What you see | Likely cause |
+|---|---|
+| `rx0` after sending `help` | No connection. Board TX must go to Flipper RX (pin 14 for USART, 16 for LPUART), board RX to Flipper TX, and GND to GND. Also check the pins setting and that the board has power. |
+| `bad` keeps rising, log is full of `.` | Wrong baud rate. Press ↓ until the text is readable, or run Auto-calibrate. |
+| Readable text, but `ap0` during `scanap` | Marauder prints a format the parser doesn't recognise. Note what the lines look like (please open an issue with an example). |
+| Works in the terminal, but nothing in Collect | Try **5V power → Keep on** or a longer **Boot wait**. The app now also re-sends the scan command if the board stays silent for 4 seconds. |
+
+Close any other app that uses the GPIO UART (for example the Marauder companion app or
+the GPIO USB-UART bridge) before using Echoids.
 
 ## Building
 

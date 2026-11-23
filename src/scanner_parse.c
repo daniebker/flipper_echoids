@@ -85,10 +85,14 @@ bool scanner_parse_line(const char* line, ScanPhase phase, ScanEvent* out) {
 
     if(phase == ScanPhaseWifi) {
         /* Marauder scanap: "RSSI: -60 Ch: 6 BSSID: aa:bb:cc:dd:ee:ff ESSID: MyNet" */
-        if(!has_mac) return false;
-        out->type = ScanEventAp;
         const char* e = strstr(line, "ESSID:");
         if(e) copy_name(out->name, e + 6);
+        if(!has_mac) {
+            /* Some Marauder builds omit the BSSID: fall back to a stable ID from the SSID. */
+            if(!e || !out->name[0]) return false;
+            mac_from_name(out->name, out->mac);
+        }
+        out->type = ScanEventAp;
         if(!out->name[0]) strcpy(out->name, "<hidden>");
         return true;
     }

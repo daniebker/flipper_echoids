@@ -3,21 +3,47 @@
 #include <furi.h>
 #include <furi_hal.h>
 #include <expansion/expansion.h>
+#include <stdio.h>
 #include <string.h>
 
-#define RX_BUF_SIZE      1024
-#define LINE_MAX         160
-#define BAUD_RATE        115200
+#define RX_BUF_SIZE      2048
+#define LINE_MAX         192
 #define WIFI_PHASE_MS    20000
 #define BT_PHASE_MS      12000
+#define RESEND_MS        4000
+#define PARTIAL_FLUSH_MS 400
 #define DEMO_INTERVAL_MS 1800
 #define DEMO_POOL        24
 
+const uint32_t scanner_baud_rates[] = {115200, 230400, 460800, 921600, 57600, 38400, 9600};
+const size_t scanner_baud_count = sizeof(scanner_baud_rates) / sizeof(scanner_baud_rates[0]);
+const uint16_t scanner_boot_waits_ms[] = {2000, 3000, 5000, 0, 500, 1000};
+const size_t scanner_boot_count = sizeof(scanner_boot_waits_ms) / sizeof(scanner_boot_waits_ms[0]);
+const char* const scanner_wifi_cmds[] = {"scanap", "scanall"};
+const size_t scanner_wifi_cmd_count = sizeof(scanner_wifi_cmds) / sizeof(scanner_wifi_cmds[0]);
+const char* const scanner_bt_cmds[] = {"sniffbt"};
+const size_t scanner_bt_cmd_count = sizeof(scanner_bt_cmds) / sizeof(scanner_bt_cmds[0]);
+
+const char* scanner_uart_name(uint8_t uart) {
+    return uart == ScanUartLpuart ? "LPUART 15/16" : "USART 13/14";
+}
+
+const char* scanner_power_name(uint8_t power) {
+    switch(power) {
+    case ScanPowerKeepOn:
+        return "Keep on";
+    case ScanPowerUntouched:
+        return "Don't touch";
+    default:
+        return "Auto";
+    }
+}
+
 struct Scanner {
     bool running;
+    bool manual;
     ScanSource source;
-    ScanUart uart;
-    bool bt_enabled;
+    ScanConfig cfg;
 
     /* UART */
     FuriHalSerialHandle* serial;
@@ -26,13 +52,46 @@ struct Scanner {
     bool otg_enabled_by_us;
     char line[LINE_MAX];
     size_t line_len;
-    bool alive;
+    uint32_t last_rx_tick;
 
+    /* Scan cycle */
     ScanPhase phase;
+    bool cmd_pending;
+    uint32_t ready_tick;
     uint32_t phase_started;
+    uint32_t last_cmd_tick;
+    uint32_t bytes_at_cmd;
     uint32_t last_demo;
     const char* error;
+
+    ScanStats stats;
+    char log[SCAN_LOG_LINES][SCAN_LOG_LEN];
+    uint8_t log_pos;
+    uint8_t log_count;
 };
+
+/* ------------------------------------------------------------------------- */
+
+static void scanner_log(Scanner* s, char prefix, const char* text, size_t len) {
+    char* dst = s->log[s->log_pos];
+    size_t n = 0;
+    dst[n++] = prefix;
+    for(size_t i = 0; i < len && n < SCAN_LOG_LEN - 1; i++) {
+        unsigned char c = (unsigned char)text[i];
+        dst[n++] = (c >= 0x20 && c < 0x7F) ? (char)c : '.';
+    }
+    dst[n] = '\0';
+    s->log_pos = (s->log_pos + 1) % SCAN_LOG_LINES;
+    if(s->log_count < SCAN_LOG_LINES) s->log_count++;
+}
+
+size_t scanner_get_log(Scanner* s, char out[SCAN_LOG_LINES][SCAN_LOG_LEN]) {
+    uint8_t start = (uint8_t)((s->log_pos + SCAN_LOG_LINES - s->log_count) % SCAN_LOG_LINES);
+    for(uint8_t i = 0; i < s->log_count; i++) {
+        memcpy(out[i], s->log[(start + i) % SCAN_LOG_LINES], SCAN_LOG_LEN);
+    }
+    return s->log_count;
+}
 
 static void scanner_rx_cb(FuriHalSerialHandle* handle, FuriHalSerialRxEvent event, void* context) {
     Scanner* s = context;
@@ -42,21 +101,50 @@ static void scanner_rx_cb(FuriHalSerialHandle* handle, FuriHalSerialRxEvent even
     }
 }
 
-static void scanner_send(Scanner* s, const char* cmd) {
+static void scanner_tx_raw(Scanner* s, const char* cmd) {
     if(!s->serial) return;
     furi_hal_serial_tx(s->serial, (const uint8_t*)cmd, strlen(cmd));
+    const char* eol = s->cfg.eol ? "\r\n" : "\n";
+    furi_hal_serial_tx(s->serial, (const uint8_t*)eol, strlen(eol));
     furi_hal_serial_tx_wait_complete(s->serial);
+    s->stats.tx_cmds++;
+    scanner_log(s, '>', cmd, strlen(cmd));
+}
+
+void scanner_send_cmd(Scanner* s, const char* cmd) {
+    if(!s->running || s->source != ScanSourceBoard) return;
+    if(s->manual) {
+        /* Track what the board is doing so the parser knows how to read lines. */
+        if(strncmp(cmd, "stopscan", 8) == 0)
+            s->phase = ScanPhaseIdle;
+        else if(strncmp(cmd, "scanap", 6) == 0 || strncmp(cmd, "scanall", 7) == 0)
+            s->phase = ScanPhaseWifi;
+        else if(strncmp(cmd, "sniffbt", 7) == 0)
+            s->phase = ScanPhaseBt;
+    }
+    scanner_tx_raw(s, cmd);
 }
 
 static void scanner_enter_phase(Scanner* s, ScanPhase phase) {
     s->phase = phase;
     s->phase_started = furi_get_tick();
-    if(s->source != ScanSourceBoard) return;
-    scanner_send(s, "stopscan\n");
-    furi_delay_ms(50);
-    if(phase == ScanPhaseWifi) scanner_send(s, "scanap\n");
-    if(phase == ScanPhaseBt) scanner_send(s, "sniffbt\n");
+    s->cmd_pending = s->source == ScanSourceBoard;
 }
+
+static void scanner_send_phase_cmd(Scanner* s) {
+    s->cmd_pending = false;
+    scanner_tx_raw(s, "stopscan");
+    furi_delay_ms(50);
+    if(s->phase == ScanPhaseWifi)
+        scanner_tx_raw(s, scanner_wifi_cmds[s->cfg.wifi_cmd % scanner_wifi_cmd_count]);
+    if(s->phase == ScanPhaseBt)
+        scanner_tx_raw(s, scanner_bt_cmds[s->cfg.bt_cmd % scanner_bt_cmd_count]);
+    s->last_cmd_tick = furi_get_tick();
+    s->phase_started = s->last_cmd_tick;
+    s->bytes_at_cmd = s->stats.rx_bytes;
+}
+
+/* ------------------------------------------------------------------------- */
 
 Scanner* scanner_alloc(void) {
     Scanner* s = malloc(sizeof(Scanner));
@@ -71,51 +159,91 @@ void scanner_free(Scanner* s) {
     free(s);
 }
 
-bool scanner_start(Scanner* s, ScanSource source, ScanUart uart, bool bt_enabled) {
+bool scanner_power_on(void) {
+    if(furi_hal_power_is_otg_enabled()) return false;
+    return furi_hal_power_enable_otg();
+}
+
+void scanner_power_off(void) {
+    furi_hal_power_disable_otg();
+}
+
+static bool scanner_open(Scanner* s, ScanSource source, const ScanConfig* cfg, bool manual) {
     if(s->running) scanner_stop(s);
     s->source = source;
-    s->uart = uart;
-    s->bt_enabled = bt_enabled;
-    s->alive = false;
+    s->cfg = *cfg;
+    s->manual = manual;
     s->error = NULL;
     s->line_len = 0;
+    s->cmd_pending = false;
+    s->phase = ScanPhaseIdle;
     s->last_demo = furi_get_tick();
+    s->ready_tick = furi_get_tick();
+    memset(&s->stats, 0, sizeof(s->stats));
     furi_stream_buffer_reset(s->rx);
 
     if(source == ScanSourceBoard) {
+        uint32_t baud = scanner_baud_rates[cfg->baud_idx % scanner_baud_count];
         s->expansion = furi_record_open(RECORD_EXPANSION);
         expansion_disable(s->expansion);
 
-        FuriHalSerialId id = uart == ScanUartLpuart ? FuriHalSerialIdLpuart :
-                                                      FuriHalSerialIdUsart;
+        FuriHalSerialId id = cfg->uart == ScanUartLpuart ? FuriHalSerialIdLpuart :
+                                                           FuriHalSerialIdUsart;
         s->serial = furi_hal_serial_control_acquire(id);
         if(!s->serial) {
-            s->error = "UART busy";
+            s->error = "UART busy (close other apps)";
+        } else if(!furi_hal_serial_is_baud_rate_supported(s->serial, baud)) {
+            s->error = "Baud not supported";
+            furi_hal_serial_control_release(s->serial);
+            s->serial = NULL;
+        }
+        if(!s->serial) {
             expansion_enable(s->expansion);
             furi_record_close(RECORD_EXPANSION);
             s->expansion = NULL;
             return false;
         }
 
-        /* Most ESP32 boards are powered from the 5V pin. */
-        if(!furi_hal_power_is_otg_enabled()) {
-            s->otg_enabled_by_us = furi_hal_power_enable_otg();
-            furi_delay_ms(300); /* let the board boot */
-        }
-
-        furi_hal_serial_init(s->serial, BAUD_RATE);
+        furi_hal_serial_init(s->serial, baud);
         furi_hal_serial_async_rx_start(s->serial, scanner_rx_cb, s, false);
+
+        char msg[SCAN_LOG_LEN];
+        snprintf(msg, sizeof(msg), "%s @%lu", scanner_uart_name(cfg->uart), (unsigned long)baud);
+        scanner_log(s, '#', msg, strlen(msg));
+
+        if(cfg->power != ScanPowerUntouched) {
+            bool turned_on = scanner_power_on();
+            if(turned_on) {
+                /* The ESP32 needs time to boot before it accepts commands. */
+                s->ready_tick =
+                    furi_get_tick() +
+                    furi_ms_to_ticks(scanner_boot_waits_ms[cfg->boot_idx % scanner_boot_count]);
+                s->otg_enabled_by_us = cfg->power == ScanPowerAuto;
+                scanner_log(s, '#', "5V on, board booting", 20);
+            } else if(!furi_hal_power_is_otg_enabled()) {
+                scanner_log(s, '#', "5V enable FAILED", 16);
+            }
+        }
     }
 
     s->running = true;
+    return true;
+}
+
+bool scanner_start(Scanner* s, ScanSource source, const ScanConfig* cfg) {
+    if(!scanner_open(s, source, cfg, false)) return false;
     scanner_enter_phase(s, ScanPhaseWifi);
     return true;
+}
+
+bool scanner_start_manual(Scanner* s, const ScanConfig* cfg) {
+    return scanner_open(s, ScanSourceBoard, cfg, true);
 }
 
 void scanner_stop(Scanner* s) {
     if(!s->running) return;
     if(s->serial) {
-        scanner_send(s, "stopscan\n");
+        if(!s->manual) scanner_tx_raw(s, "stopscan");
         furi_hal_serial_async_rx_stop(s->serial);
         furi_hal_serial_deinit(s->serial);
         furi_hal_serial_control_release(s->serial);
@@ -143,20 +271,53 @@ ScanPhase scanner_phase(Scanner* s) {
 }
 
 bool scanner_board_alive(Scanner* s) {
-    return s->source == ScanSourceDemo ? s->running : s->alive;
+    return s->source == ScanSourceDemo ? s->running : s->stats.rx_printable > 0;
+}
+
+bool scanner_booting(Scanner* s) {
+    return s->running && s->source == ScanSourceBoard &&
+           (int32_t)(furi_get_tick() - s->ready_tick) < 0;
 }
 
 const char* scanner_error(Scanner* s) {
     return s->error;
 }
 
+void scanner_get_stats(Scanner* s, ScanStats* out) {
+    *out = s->stats;
+}
+
+void scanner_reset_stats(Scanner* s) {
+    memset(&s->stats, 0, sizeof(s->stats));
+    s->bytes_at_cmd = 0;
+}
+
+/* ------------------------------------------------------------------------- */
+
 static void scanner_update_phase(Scanner* s) {
-    uint32_t elapsed = furi_get_tick() - s->phase_started;
+    if(s->manual || s->phase == ScanPhaseIdle) return;
+    uint32_t now = furi_get_tick();
+
+    if(s->cmd_pending) {
+        if(s->source == ScanSourceBoard && (int32_t)(now - s->ready_tick) >= 0)
+            scanner_send_phase_cmd(s);
+        return;
+    }
+
+    /* Board said nothing at all since our command: it probably missed it. */
+    if(s->source == ScanSourceBoard && s->stats.rx_bytes == s->bytes_at_cmd &&
+       now - s->last_cmd_tick > furi_ms_to_ticks(RESEND_MS)) {
+        s->stats.resends++;
+        scanner_send_phase_cmd(s);
+        return;
+    }
+
+    uint32_t elapsed = now - s->phase_started;
     if(s->phase == ScanPhaseWifi && elapsed > furi_ms_to_ticks(WIFI_PHASE_MS)) {
-        if(s->bt_enabled)
+        if(s->cfg.bt_enabled)
             scanner_enter_phase(s, ScanPhaseBt);
         else
-            s->phase_started = furi_get_tick();
+            s->phase_started = now;
     } else if(s->phase == ScanPhaseBt && elapsed > furi_ms_to_ticks(BT_PHASE_MS)) {
         scanner_enter_phase(s, ScanPhaseWifi);
     }
@@ -175,7 +336,7 @@ static bool scanner_demo(Scanner* s, ScanEvent* out) {
 
     /* A fixed pool of fake devices so they reappear (and stay the same). */
     uint32_t idx = furi_hal_random_get() % DEMO_POOL;
-    bool bt = s->bt_enabled && s->phase == ScanPhaseBt;
+    bool bt = s->cfg.bt_enabled && s->phase == ScanPhaseBt;
     out->type = bt ? ScanEventBt : ScanEventAp;
     out->mac[0] = bt ? 0xD0 : 0xDE;
     out->mac[1] = 0x00;
@@ -186,13 +347,29 @@ static bool scanner_demo(Scanner* s, ScanEvent* out) {
     out->rssi = (int8_t)(-40 - (int)(furi_hal_random_get() % 50));
     if(bt) {
         snprintf(out->name, SCAN_NAME_LEN, "BLE-%02X%02X", out->mac[4], out->mac[5]);
+        s->stats.bts++;
     } else {
         snprintf(
             out->name,
             SCAN_NAME_LEN,
             "%s",
             demo_names[idx % (sizeof(demo_names) / sizeof(demo_names[0]))]);
+        s->stats.aps++;
     }
+    return true;
+}
+
+static bool scanner_finish_line(Scanner* s, ScanEvent* out) {
+    s->line[s->line_len] = '\0';
+    size_t len = s->line_len;
+    s->line_len = 0;
+    s->stats.lines++;
+    scanner_log(s, ' ', s->line, len);
+    if(!scanner_parse_line(s->line, s->phase, out)) return false;
+    if(out->type == ScanEventAp)
+        s->stats.aps++;
+    else
+        s->stats.bts++;
     return true;
 }
 
@@ -204,15 +381,26 @@ bool scanner_poll(Scanner* s, ScanEvent* out) {
 
     uint8_t byte;
     while(furi_stream_buffer_receive(s->rx, &byte, 1, 0) == 1) {
-        s->alive = true;
+        s->stats.rx_bytes++;
+        s->last_rx_tick = furi_get_tick();
         if(byte == '\n' || byte == '\r') {
             if(s->line_len == 0) continue;
-            s->line[s->line_len] = '\0';
-            s->line_len = 0;
-            if(scanner_parse_line(s->line, s->phase, out)) return true;
-        } else if(s->line_len < LINE_MAX - 1) {
-            s->line[s->line_len++] = (char)byte;
+            if(scanner_finish_line(s, out)) return true;
+            continue;
         }
+        if((byte >= 0x20 && byte < 0x7F) || byte == '\t')
+            s->stats.rx_printable++;
+        else
+            s->stats.rx_garbage++;
+        s->line[s->line_len++] = (char)byte;
+        if(s->line_len >= LINE_MAX - 1) {
+            if(scanner_finish_line(s, out)) return true;
+        }
+    }
+
+    /* Show prompts / garbage that never ends with a newline. */
+    if(s->line_len && furi_get_tick() - s->last_rx_tick > furi_ms_to_ticks(PARTIAL_FLUSH_MS)) {
+        if(scanner_finish_line(s, out)) return true;
     }
     return false;
 }
