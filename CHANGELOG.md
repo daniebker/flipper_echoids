@@ -10,9 +10,9 @@ Releases are published by pushing a `v*` tag (see
 
 ## [Unreleased]
 
-The first release, 1.0 (`fap_version` in `application.fam`, `versionName` in
-`android/app/build.gradle`), has not been tagged yet. Everything in the game so
-far is listed here.
+## [0.1.0] - 2026-11-23
+
+The first release.
 
 ### Added
 
@@ -92,4 +92,5 @@ far is listed here.
   no longer sits under the gesture bar.
 - The main menu's highlight bar no longer covers the lead echoid's sprite.
 
-[Unreleased]: https://github.com/daniebker/flipper_echoids/commits/HEAD
+[Unreleased]: https://github.com/daniebker/flipper_echoids/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/daniebker/flipper_echoids/releases/tag/v0.1.0
