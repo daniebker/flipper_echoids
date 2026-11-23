@@ -16,8 +16,10 @@ import android.provider.Settings;
 import android.view.Gravity;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -55,6 +57,10 @@ public final class MainActivity extends Activity {
     private Vibrator vibrator;
     private boolean visible;
     private long lastSecond;
+    /* While the user touches a page, and briefly after (a fling), don't rebuild it. */
+    private boolean touching;
+    private long lastTouchUp;
+    private static final long FLING_MS = 1500;
 
     private final Runnable tick = new Runnable() {
         @Override
@@ -68,7 +74,7 @@ public final class MainActivity extends Activity {
                 /* Out of the dungeon: the game no longer needs the network. */
                 if(link.active() && !Ui.obj(Engine.state()).optBoolean("wantsLink")) link.release();
                 Screen s = current();
-                if(s.autoRefresh()) refresh();
+                if(s.autoRefresh() && !userScrolling()) refresh();
             }
             if(visible) handler.postDelayed(this, TICK_MS);
         }
@@ -188,8 +194,17 @@ public final class MainActivity extends Activity {
         content.removeAllViews();
         content.addView(v, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         if(v instanceof ScrollView && scrollY > 0) {
+            /* Restore the scroll before the first frame is drawn; posting it
+             * drew one frame at the top, which flickered every refresh. */
             final int y = scrollY;
-            v.post(() -> v.scrollTo(0, y));
+            v.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
+                @Override
+                public boolean onPreDraw() {
+                    v.getViewTreeObserver().removeOnPreDrawListener(this);
+                    v.scrollTo(0, y);
+                    return true;
+                }
+            });
         }
         setTitle(s.title());
         if(getActionBar() != null) getActionBar().setDisplayHomeAsUpEnabled(!stack.isEmpty());
@@ -357,13 +372,27 @@ public final class MainActivity extends Activity {
     }
 
     /** A scrolling page with a column for cards. */
+    @SuppressLint("ClickableViewAccessibility")
     ScrollView page(LinearLayout column) {
         ScrollView sv = new ScrollView(this);
         sv.setFillViewport(true);
         sv.setBackgroundColor(Ui.BG);
         column.setPadding(0, Ui.dp(this, 6), 0, Ui.dp(this, 16));
         sv.addView(column);
+        sv.setOnTouchListener((view, e) -> {
+            int a = e.getActionMasked();
+            if(a == MotionEvent.ACTION_DOWN) touching = true;
+            else if(a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_CANCEL) {
+                touching = false;
+                lastTouchUp = System.currentTimeMillis();
+            }
+            return false; /* let the ScrollView scroll */
+        });
         return sv;
+    }
+
+    private boolean userScrolling() {
+        return touching || System.currentTimeMillis() - lastTouchUp < FLING_MS;
     }
 
     static int textColorOn(int bg) {
