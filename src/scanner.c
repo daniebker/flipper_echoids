@@ -359,10 +359,16 @@ static void scanner_update_join(Scanner* s) {
     case JoinList:
         if(now - s->join_tick < furi_ms_to_ticks(JOIN_LIST_MS)) break;
         if(s->join_index >= 0) {
-            /* Quote the password; Marauder also accepts '...' for one with a " in it. */
+            /* Quote the password only when it has a space: older Marauder builds
+             * don't strip quotes, so they'd become part of the password. Use
+             * '...' for one that also has a " in it. */
             char cmd[96];
-            char q = strchr(s->join_password, '"') ? '\'' : '"';
-            snprintf(cmd, sizeof(cmd), "join -a %d -p %c%s%c", s->join_index, q, s->join_password, q);
+            if(strchr(s->join_password, ' ')) {
+                char q = strchr(s->join_password, '"') ? '\'' : '"';
+                snprintf(cmd, sizeof(cmd), "join -a %d -p %c%s%c", s->join_index, q, s->join_password, q);
+            } else {
+                snprintf(cmd, sizeof(cmd), "join -a %d -p %s", s->join_index, s->join_password);
+            }
             s->stats.tx_cmds++;
             if(s->serial) {
                 furi_hal_serial_tx(s->serial, (const uint8_t*)cmd, strlen(cmd));
