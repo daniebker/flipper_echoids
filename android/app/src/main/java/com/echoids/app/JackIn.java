@@ -24,18 +24,22 @@ final class JackIn {
             app.toast("Jacking in needs Android 10 or newer");
             return;
         }
-        WifiLink.Kind kind = WifiLink.kind(RadioScanner.security(bssid));
+        String caps = RadioScanner.security(app, bssid, ssid);
+        /* Unknown security (not seen in a scan lately): ask for a password anyway
+         * and treat a blank one as an open network. */
+        boolean unknown = caps.isEmpty();
+        WifiLink.Kind kind = WifiLink.kind(caps);
         if(kind == WifiLink.Kind.UNSUPPORTED) {
             app.toast("Enterprise and WEP networks aren't supported");
             return;
         }
-        if(kind == WifiLink.Kind.OPEN) {
+        if(kind == WifiLink.Kind.OPEN && !unknown) {
             connect(app, nearbyIndex, ssid, bssid, "", kind);
             return;
         }
         EditText password = new EditText(app);
         password.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        password.setHint("WiFi password");
+        password.setHint(unknown ? "WiFi password (blank if open)" : "WiFi password");
         password.setSingleLine();
         LinearLayout box = Ui.column(app);
         int p = Ui.dp(app, 20);
@@ -45,7 +49,11 @@ final class JackIn {
         new AlertDialog.Builder(app)
             .setTitle("Jack in to " + ssid)
             .setView(box)
-            .setPositiveButton("Connect", (d, w) -> connect(app, nearbyIndex, ssid, bssid, password.getText().toString(), kind))
+            .setPositiveButton("Connect", (d, w) -> {
+                String pw = password.getText().toString();
+                WifiLink.Kind k = unknown ? (pw.isEmpty() ? WifiLink.Kind.OPEN : WifiLink.Kind.PERSONAL) : kind;
+                connect(app, nearbyIndex, ssid, bssid, pw, k);
+            })
             .setNegativeButton("Cancel", null)
             .show();
     }

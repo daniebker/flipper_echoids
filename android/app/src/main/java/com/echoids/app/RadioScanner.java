@@ -260,9 +260,31 @@ final class RadioScanner {
         return any ? mac : null;
     }
 
-    /** The security flags last seen for an access point, or "" if unknown. */
-    static String security(String bssid) {
+    /**
+     * The security flags last seen for an access point, or "" if unknown.
+     * Falls back to the system's latest scan results (by BSSID, then by name),
+     * since our own map only fills while the game is scanning.
+     */
+    @SuppressLint("MissingPermission")
+    static String security(Context context, String bssid, String ssid) {
         String caps = wifiSecurity.get(bssid.toUpperCase(java.util.Locale.ROOT));
-        return caps == null ? "" : caps;
+        if(caps != null) return caps;
+        List<android.net.wifi.ScanResult> results;
+        try {
+            WifiManager w = (WifiManager)context.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            results = w == null ? null : w.getScanResults();
+        } catch(SecurityException e) {
+            results = null;
+        }
+        if(results == null) return "";
+        String byName = null;
+        for(android.net.wifi.ScanResult r : results) {
+            if(r.capabilities == null || r.BSSID == null) continue;
+            if(r.BSSID.equalsIgnoreCase(bssid)) return r.capabilities;
+            String s = r.SSID;
+            if(s != null && s.startsWith("\"") && s.endsWith("\"") && s.length() >= 2) s = s.substring(1, s.length() - 1);
+            if(byName == null && ssid.equals(s)) byName = r.capabilities;
+        }
+        return byName == null ? "" : byName;
     }
 }

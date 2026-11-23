@@ -2,7 +2,6 @@ package com.echoids.app;
 
 import android.content.Context;
 import android.net.ConnectivityManager;
-import android.net.MacAddress;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
@@ -14,7 +13,7 @@ import android.os.Looper;
 import java.util.Locale;
 
 /**
- * Jacking in: connects the phone to one WiFi network (by its BSSID) for the
+ * Jacking in: connects the phone to one WiFi network (by its name) for the
  * game, and tells the engine when the link is up or drops. Android asks the
  * player to confirm the connection. Needs Android 10 or newer.
  */
@@ -61,8 +60,9 @@ final class WifiLink {
             return;
         }
         WifiNetworkSpecifier.Builder spec = new WifiNetworkSpecifier.Builder().setSsid(ssid);
+        /* Match by name only: pinning the BSSID fails ("No devices found") when the
+         * network's other access points or bands are what's in range now. */
         try {
-            spec.setBssid(MacAddress.fromString(bssid.toLowerCase(Locale.ROOT)));
             if(kind == Kind.PERSONAL_WPA3)
                 spec.setWpa3Passphrase(password);
             else if(kind == Kind.PERSONAL)
