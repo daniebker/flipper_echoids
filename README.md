@@ -103,6 +103,9 @@ git tag v1.0.0 && git push origin v1.0.0
 The Release workflow builds everything again and attaches it to a GitHub Release: both
 `.fap` files, `echoids-android.apk`, `echoids-docs.zip` and `SHA256SUMS.txt`.
 
+What changed in each version is listed in [CHANGELOG.md](CHANGELOG.md). Before tagging a
+release, move its **Unreleased** entries into a section for the new version.
+
 ## Hardware
 
 The Flipper Zero has no WiFi radio, and its stock firmware can't scan for Bluetooth

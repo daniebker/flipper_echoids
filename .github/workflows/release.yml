@@ -79,7 +79,7 @@ jobs:
           path: dist
           merge-multiple: true
       - name: Bundle the docs
-        run: zip -r "dist/echoids-docs.zip" README.md LICENSE docs/wiki
+        run: zip -r "dist/echoids-docs.zip" README.md CHANGELOG.md LICENSE docs/wiki
       - name: Checksums
         run: |
           cd dist
@@ -95,7 +95,7 @@ jobs:
           | \`echoids-flipper-release-fw-api-*.fap\` | Flipper Zero app for **release** firmware. Copy to \`/ext/apps/Games/\` or install with qFlipper. |
           | \`echoids-flipper-dev-fw-api-*.fap\` | Flipper Zero app for **dev** firmware. |
           | \`echoids-android.apk\` | Android app (Android 7.0+). Uses the phone's own WiFi and Bluetooth. |
-          | \`echoids-docs.zip\` | README and wiki (types, moves, echoids, battles, items). |
+          | \`echoids-docs.zip\` | README, changelog and wiki (types, moves, echoids, battles, items). |
           | \`SHA256SUMS.txt\` | Checksums for the files above. |
 
           The Flipper needs an ESP32 board running Marauder for scanning; see the README.

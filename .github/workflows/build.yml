@@ -28,6 +28,7 @@ jobs:
           name: echoids-docs
           path: |
             README.md
+            CHANGELOG.md
             LICENSE
             docs/wiki/
 
