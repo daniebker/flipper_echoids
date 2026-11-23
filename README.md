@@ -33,6 +33,11 @@ work exactly the same way.
   - **PAC** lists everything in Cold PAC Storage, however many you have.
   - **Craft** shows every recipe and whether you have the shards.
   - **Bag** shows your items, plus a table of shards by element and tier.
+- **Dungeons:** on a wild echoid's page, **Jack in** connects the phone to that network (it
+  asks for the password, and Android asks you to confirm) and opens the network's
+  [dungeon](#dungeons). While jacked in, the Collect tab becomes **Dungeon**, and PAC and Craft
+  are hidden. If the connection drops, you're ejected. Needs Android 10 or newer; enterprise
+  (802.1X) and WEP networks can't be joined.
 - **Echoid details:** tap any echoid to see its sprite, rarity, star rating and each stat's
   roll, plus its moves, the next move it learns, the moves its type can't learn, and its
   active hours. From the same screen you can make it your lead, use an item on it, or move
@@ -140,17 +145,18 @@ BT,11:22:33:44:55:66,-70,MyHeadphones
 ## How to play
 
 The **[wiki](docs/wiki/Home.md)** has the full details: echoids and the star rating, types
-and the matchup chart, every move, battles and catch chances, and items and crafting.
+and the matchup chart, every move, battles and catch chances, items and crafting, and dungeons.
 
 | Screen | Controls |
 |---|---|
-| **Collect** | Starts scanning. The top right shows how many echoids you've spotted (ball icon) and how many shards you've collected (diamond icon) since opening the app. Nearby access points are listed as echoids, showing species, level, type and signal strength. The panel at the bottom shows the selected echoid's rarity, type and stats (HP, ATK, DEF, SPD) at the level it would battle at. `*` = already caught (in your team or PAC), `x` = already fought this session. The letter after the type is the echoid's **rarity**: `C` Common, `U` Uncommon, `R` Rare, and `E` Epic or `L` Legendary in a box so they stand out. The same badge appears in the Team and PAC lists and under the wild echoid's name in battle. **OK** battles the selected echoid. You can't battle or catch an echoid you already own; the app checks your team and PAC when you press OK, when you open the ball menu and before it stores a catch, so you can't end up with duplicates. **Back** stops scanning. Bluetooth shards are collected automatically and shown in a popup. |
+| **Collect** | Starts scanning. The top right shows how many echoids you've spotted (ball icon) and how many shards you've collected (diamond icon) since opening the app. Nearby access points are listed as echoids, showing species, level, type and signal strength. The panel at the bottom shows the selected echoid's rarity, type and stats (HP, ATK, DEF, SPD) at the level it would battle at. `*` = already caught (in your team or PAC), `x` = already fought this session. The letter after the type is the echoid's **rarity**: `C` Common, `U` Uncommon, `R` Rare, and `E` Epic or `L` Legendary in a box so they stand out. The same badge appears in the Team and PAC lists and under the wild echoid's name in battle. **OK** offers **Battle!** or **Jack in** (enter that network's [dungeon](#dungeons)). You can't battle or catch an echoid you already own; the app checks your team and PAC when you press OK, when you open the ball menu and before it stores a catch, so you can't end up with duplicates. **Back** stops scanning. Bluetooth shards are collected automatically and shown in a popup. |
 | **Battle** | **←/→** choose **Hit**, **Swap**, **Ball** or **Run**, and **OK** confirms. **Hit** opens the fighting echoid's moves (up to 4): **↑/↓** picks one and **OK** uses it. Each row shows the move's name, `x2` / `x.5` if the type matchup helps or hurts against this wild echoid, the move's type and its power. **Swap** sends in another team member (`>` marks the one fighting). Switching uses your turn, so the wild echoid gets an attack on the newcomer. If your echoid faints and anyone on your team can still fight, you pick who goes next instead of losing; the battle is only lost when the whole team has fainted. A battle starts with your lead, or with the first healthy team member if the lead has fainted. XP is shared: see [Catching and levelling](#catching-and-levelling). **Ball** opens the throw menu, which shows each ball's catch chance. **Run** tries to escape. |
 | **Team** | Two tabs, switched with **←/→**: **Team** (up to 6 echoids you carry) and **PAC** (Cold PAC Storage for the rest). **OK** opens an echoid's details, where **←/→** browses and **OK** opens its actions. For a team member: **Set as lead** (the echoid that fights) or **Send to PAC**. For a PAC echoid: **Move to team**. If the team is full, you pick which team member to swap out. The team always keeps at least one echoid. |
 | **PAC** | Opens **Cold PAC Storage** straight away: browse every echoid you've stored with **↑/↓**, and press **OK** for its details and **Move to team**. The main menu shows how many echoids are stored. It's the same screen as Team's PAC tab, so **←/→** switches to the team. |
 | **Craft** | `+` marks recipes you can afford. **OK** crafts one. |
 | **Bag** | **←/→** switches between Items and Shards. The item list scrolls with **↑/↓**. **OK** on a Tonic, Revive Crystal or Echo Crystal opens your team list (PAC echoids aren't listed): pick the echoid to use it on with **↑/↓** and press **OK** (**Back** cancels). The list starts on your lead. |
 | **Settings** | Board setup (see below), an in-app guide, and reset. |
+| **Dungeon** | While jacked in, the menu only offers **Dungeon**, **Team**, **Bag** and **Jack out** (press **OK** twice). The Dungeon screen shows the rooms as boxes (`x` fight, `$` shard cache, `z` rest, `B` boss): filled in once cleared, framed twice where you are. The foe in a fight room is shown with its level. **OK** plays the room, then **OK** again goes deeper. In dungeon battles **Ball** and **Run** do nothing. |
 
 ### Types
 
@@ -332,6 +338,34 @@ rating only judges the random roll, so a Common can be perfect too.
   regeneration work again. Echoids that leave the PAC are fully healed, fainted or not.
 - If your whole team has fainted you can't start a battle. Scanning for Bluetooth shards
   still works in Collect, so you can craft Revive Crystals.
+
+### Dungeons
+
+Every WiFi network you can connect to hides a **dungeon**. On Collect, select an echoid,
+press **OK** and choose **Jack in**. Type the network's password on the Flipper keyboard
+(leave it empty for an open network). The ESP32 board then really connects to the network
+(Marauder's `join` command), and once it's connected you enter.
+
+- **Unique to the network:** the network's MAC decides the dungeon's name and element (its
+  own echoid's type), how many rooms it has (4–6 before the boss) and what's in them, and
+  which echoids you meet. The same network always gives the same dungeon.
+- **Rooms:** fights, shard caches (2–4 shards of the dungeon's element) and at most one
+  rest, which heals your team by half their max HP (fainted echoids still need a Revive
+  Crystal). A **boss** waits in the last room.
+- **Foes match your team:** dungeon echoids fight at your team's average level, and the
+  boss at 3 levels above it. Most share the dungeon's element, so bring the right types.
+- **Only your team and bag:** while jacked in, you can't scan, craft, open the PAC or change
+  settings. You can use items between fights and change your lead.
+- **No catching, no running:** dungeon echoids can only be fought. Wins still give XP,
+  shared as usual.
+- **Ejected:** if your whole team faints, or (on Android) the connection drops, you're
+  thrown out. Jacking out by choice also leaves; either way the dungeon starts again from
+  the first room next time.
+- **Rewards:** beating the boss gives a Prismatic shard of the dungeon's element, 2 Great
+  Balls and a Revive Crystal, and counts as a cleared dungeon.
+- **Board notes:** jacking in stops scanning, and the board stays connected (and powered)
+  until you jack out. Networks whose name is hidden can't be joined, and a password with
+  both `"` and `'` in it can't be sent to Marauder.
 
 Progress is saved to `/ext/apps_data/echoids/save.bin`.
 

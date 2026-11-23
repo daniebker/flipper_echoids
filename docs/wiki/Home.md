@@ -14,10 +14,11 @@ troubleshooting.
 | **[Types and Moves](Types-and-Moves.md)** | Every move, which types can learn it, and each species' full learnset |
 | **[Battles](Battles.md)** | Turn order, damage, switching and fainting, catch chances, running away, XP and sharing |
 | **[Items and Crafting](Items-and-Crafting.md)** | Shards and cooldowns, every recipe, tonics and revives, Echo Balls, PACs |
+| **[Dungeons](Dungeons.md)** | Jacking in to a WiFi network, rooms and bosses, foe levels, rules inside, rewards |
 
 ## Keeping the wiki up to date
 
-Everything except this page is generated from the game code by `tools/gen_wiki.c`, so the
+Everything except this page and Dungeons is generated from the game code by `tools/gen_wiki.c`, so the
 numbers always match the game, and CI fails if a page is out of date. After changing the game,
 regenerate the pages:
 
@@ -33,4 +34,4 @@ cc -std=c11 -Isrc src/game.c tools/gen_wiki.c -o gen_wiki
 
 These pages live in `docs/wiki/` in the repository. To also show them on GitHub's **Wiki**
 tab, create a first wiki page on github.com, then copy each file in as a page with the same
-name: `Home`, `Echoids`, `Types`, `Types-and-Moves`, `Battles` and `Items-and-Crafting`.
+name: `Home`, `Echoids`, `Types`, `Types-and-Moves`, `Battles`, `Items-and-Crafting` and `Dungeons`.

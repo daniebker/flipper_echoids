@@ -37,6 +37,8 @@ struct Scanner {
     ScanConfig cfg;
     ScanPhase phase;
     ScanStats stats;
+    ScanJoinState join_state;
+    uint32_t join_tick;
 };
 
 /* Shared with the Java side. */
@@ -101,7 +103,24 @@ bool scanner_start_manual(Scanner* s, const ScanConfig* cfg) {
     return false; /* no UART on a phone */
 }
 
+/* Tests: joining takes half a second; the password "wrong" fails. */
+bool scanner_join(Scanner* s, const ScanConfig* cfg, const char* ssid, const char* password) {
+    UNUSED(ssid);
+    s->running = true;
+    s->cfg = *cfg;
+    s->join_tick = furi_get_tick();
+    s->join_state = strcmp(password, "wrong") == 0 ? ScanJoinFailed : ScanJoinConnecting;
+    return true;
+}
+
+ScanJoinState scanner_join_state(Scanner* s) {
+    if(s->join_state == ScanJoinConnecting && furi_get_tick() - s->join_tick > 500)
+        s->join_state = ScanJoinConnected;
+    return s->join_state;
+}
+
 void scanner_stop(Scanner* s) {
+    s->join_state = ScanJoinIdle;
     s->running = false;
     s->phase = ScanPhaseIdle;
     pthread_mutex_lock(&lock);

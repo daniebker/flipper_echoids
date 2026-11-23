@@ -47,8 +47,11 @@ public final class MainActivity extends Activity {
     private LinearLayout tabBar;
     private final TextView[] tabs = new TextView[5];
     private Screen[] tabScreens;
+    private Screen dungeonScreen;
     private int currentTab;
+    private boolean inDungeon;
     private RadioScanner radios;
+    WifiLink link;
     private Vibrator vibrator;
     private boolean visible;
     private long lastSecond;
@@ -62,6 +65,8 @@ public final class MainActivity extends Activity {
             if(now - lastSecond >= 1000) {
                 lastSecond = now;
                 radios.tick(Engine.radiosWanted());
+                /* Out of the dungeon: the game no longer needs the network. */
+                if(link.active() && !Ui.obj(Engine.state()).optBoolean("wantsLink")) link.release();
                 Screen s = current();
                 if(s.autoRefresh()) refresh();
             }
@@ -74,6 +79,7 @@ public final class MainActivity extends Activity {
         super.onCreate(state);
         vibrator = (Vibrator)getSystemService(Context.VIBRATOR_SERVICE);
         radios = new RadioScanner(this);
+        link = new WifiLink(this);
         getWindow().setStatusBarColor(Ui.BG);
         getWindow().setNavigationBarColor(Ui.CARD);
         if(getActionBar() != null) {
@@ -86,6 +92,7 @@ public final class MainActivity extends Activity {
         tabScreens = new Screen[] {
             new CollectScreen(this), new TeamScreen(this), new PacScreen(this), new CraftScreen(this), new BagScreen(this),
         };
+        dungeonScreen = new DungeonScreen(this);
         LinearLayout root = Ui.column(this);
         root.setBackgroundColor(Ui.BG);
         content = new FrameLayout(this);
@@ -108,6 +115,12 @@ public final class MainActivity extends Activity {
     }
 
     @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        link.release();
+    }
+
+    @Override
     protected void onPause() {
         super.onPause();
         visible = false;
@@ -119,7 +132,26 @@ public final class MainActivity extends Activity {
     /* ---- Navigation ---- */
 
     Screen current() {
-        return stack.isEmpty() ? tabScreens[currentTab] : stack.peek();
+        if(!stack.isEmpty()) return stack.peek();
+        return currentTab == 0 && inDungeon ? dungeonScreen : tabScreens[currentTab];
+    }
+
+    /* In a dungeon only the dungeon, the team and the bag are open: Collect
+     * becomes the Dungeon tab, and PAC and Craft are hidden. */
+    private void updateTabs() {
+        boolean d = Ui.obj(Engine.state()).optBoolean("inDungeon");
+        if(d != inDungeon) {
+            inDungeon = d;
+            stack.clear();
+            currentTab = 0;
+        }
+        if(inDungeon && (currentTab == 2 || currentTab == 3)) currentTab = 0;
+        tabs[0].setText(inDungeon ? "🏰\nDungeon" : "📡\nCollect");
+        tabs[2].setVisibility(inDungeon ? View.GONE : View.VISIBLE);
+        tabs[3].setVisibility(inDungeon ? View.GONE : View.VISIBLE);
+        for(int i = 0; i < tabs.length; i++)
+            tabs[i].setTextColor(i == currentTab ? Ui.ACCENT : Ui.MUTED);
+        tabBar.setVisibility(stack.isEmpty() ? View.VISIBLE : View.GONE);
     }
 
     void selectTab(int index) {
@@ -146,6 +178,7 @@ public final class MainActivity extends Activity {
 
     /** Rebuilds the current screen, keeping the scroll position. */
     void refresh() {
+        updateTabs();
         Screen s = current();
         int scrollY = 0;
         View old = content.getChildCount() > 0 ? content.getChildAt(0) : null;
@@ -162,7 +195,7 @@ public final class MainActivity extends Activity {
         if(getActionBar() != null) getActionBar().setDisplayHomeAsUpEnabled(!stack.isEmpty());
         /* Keep the screen on while scanning or battling. */
         JSONObject st = Ui.obj(Engine.state());
-        if(st.optBoolean("scanning") || st.optBoolean("inBattle"))
+        if(st.optBoolean("scanning") || st.optBoolean("inBattle") || st.optBoolean("inDungeon"))
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         else
             getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -216,7 +249,10 @@ public final class MainActivity extends Activity {
             onBackPressed();
             return true;
         case 1:
-            if(!(current() instanceof SettingsScreen) && !(current() instanceof BattleScreen)) push(new SettingsScreen(this));
+            if(inDungeon)
+                toast("Settings are closed in a dungeon");
+            else if(!(current() instanceof SettingsScreen) && !(current() instanceof BattleScreen))
+                push(new SettingsScreen(this));
             return true;
         case 2:
             showHelp();
@@ -238,7 +274,10 @@ public final class MainActivity extends Activity {
                 "• Every move has a type. Each type beats the next: Tide → Ember → Flora → Stone → Spark → " +
                 "Gale → Pulse → Void → Tide.\n\n" +
                 "• Your team holds 6. Others go to the PAC; craft more PACs for more room.\n\n" +
-                "• Stars rate an echoid's random stats: 3 stars on every stat is perfect.")
+                "• Stars rate an echoid's random stats: 3 stars on every stat is perfect.\n\n" +
+                "• Jack in to a WiFi network you can connect to (open an echoid on Collect) to enter that " +
+                "network's dungeon. Inside, you only have your team and bag, echoids can't be caught, and a " +
+                "boss waits at the end. Foes match your team's level.")
             .setPositiveButton("Got it", null)
             .show();
     }
@@ -287,7 +326,7 @@ public final class MainActivity extends Activity {
             if(e == null) continue;
             String kind = e.optString("kind");
             toast(e.optString("text"));
-            if(kind.equals("shard_rare"))
+            if(kind.equals("shard_rare") || kind.equals("ejected"))
                 vibrate(120);
             else if(kind.startsWith("shard") || kind.equals("spotted"))
                 vibrate(30);

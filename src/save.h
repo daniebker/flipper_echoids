@@ -41,7 +41,7 @@ typedef struct {
     uint32_t seen_bt[SEEN_BT_MAX];
     uint32_t seen_bt_time[SEEN_BT_MAX];
     uint16_t seen_bt_count;
-    uint16_t reserved3;
+    uint16_t dungeons_cleared; /* was reserved (zero in older saves) */
 
     Echoid team[PARTY_MAX];
 } SaveData;

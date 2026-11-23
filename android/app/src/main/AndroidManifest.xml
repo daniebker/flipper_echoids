@@ -4,6 +4,8 @@
     <!-- WiFi access points are wild echoids -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
     <!-- Android only reveals WiFi and Bluetooth scan results with location access -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />

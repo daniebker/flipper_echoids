@@ -703,6 +703,87 @@ uint32_t battle_xp_reward(uint8_t wild_level, uint8_t rarity, bool captured) {
     return xp;
 }
 
+/* ---------- Dungeons ---------- */
+
+static const char* const dungeon_places[ECHO_TYPE_COUNT] =
+    {"Reef", "Forge", "Thicket", "Caverns", "Grid", "Spire", "Relay", "Abyss"};
+
+const char* dungeon_place_name(uint8_t type) {
+    return dungeon_places[type % ECHO_TYPE_COUNT];
+}
+
+/* A made-up MAC for the echoid in a dungeon room, tried in order. */
+static void dungeon_foe_mac(const uint8_t net_mac[6], uint8_t room, uint8_t attempt, uint8_t out[6]) {
+    MacStream st = {.s = echo_hash_mac(net_mac) ^ (0x9E3779B9u * (room + 1)) ^ (0x85EBCA6Bu * (attempt + 1))};
+    for(int i = 0; i < 6; i++)
+        out[i] = (uint8_t)mac_stream_next(&st);
+    out[0] = (uint8_t)((out[0] & 0xFC) | 0x02); /* locally administered, like a phone's random MAC */
+}
+
+void dungeon_layout(const uint8_t net_mac[6], DungeonLayout* out) {
+    memset(out, 0, sizeof(*out));
+    EchoGenes g;
+    echo_genes(net_mac, &g);
+    out->type = g.type; /* the network's own echoid sets the element */
+    MacStream st = {.s = echo_hash_mac(net_mac) ^ 0xD06E0Bu};
+    uint8_t before_boss =
+        DUNGEON_ROOMS_MIN + (uint8_t)(mac_stream_next(&st) % (DUNGEON_ROOMS_MAX - DUNGEON_ROOMS_MIN + 1));
+    out->rooms = before_boss + 1;
+
+    /* Mostly fights; at most one rest, which never comes first. */
+    bool rested = false;
+    for(uint8_t r = 0; r < before_boss; r++) {
+        uint32_t roll = mac_stream_next(&st) % 100;
+        uint8_t kind = RoomFight;
+        if(r > 0 && roll < 25)
+            kind = RoomCache;
+        else if(r > 0 && !rested && roll < 40)
+            kind = RoomRest;
+        if(kind == RoomRest) rested = true;
+        out->kind[r] = kind;
+    }
+    out->kind[before_boss] = RoomBoss;
+
+    for(uint8_t r = 0; r < out->rooms; r++) {
+        if(out->kind[r] != RoomFight && out->kind[r] != RoomBoss) continue;
+        bool boss = out->kind[r] == RoomBoss;
+        /* Foes lean towards the dungeon's element; the boss is the rarest one found. */
+        int best = -1;
+        uint8_t mac[6];
+        for(uint8_t a = 0; a < (boss ? 48 : 12); a++) {
+            dungeon_foe_mac(net_mac, r, a, mac);
+            EchoGenes fg;
+            echo_genes(mac, &fg);
+            int score = (fg.type == out->type ? 10 : 0) + (boss ? fg.rarity : 0);
+            if(score > best) {
+                best = score;
+                memcpy(out->foe[r], mac, 6);
+            }
+            if(!boss && fg.type == out->type) break;
+        }
+    }
+}
+
+void dungeon_name(const uint8_t net_mac[6], char* out, size_t size) {
+    char name[ECHO_NAME_LEN];
+    echo_name(net_mac, name, sizeof(name));
+    EchoGenes g;
+    echo_genes(net_mac, &g);
+    snprintf(out, size, "%s %s", name, dungeon_place_name(g.type));
+}
+
+uint8_t dungeon_foe_level(uint8_t team_level, bool boss) {
+    uint16_t lv = team_level ? team_level : 1;
+    if(boss) lv += DUNGEON_BOSS_LEVELS;
+    return lv > MAX_LEVEL ? MAX_LEVEL : (uint8_t)lv;
+}
+
+void dungeon_cache(const uint8_t net_mac[6], uint8_t room, uint8_t* count, uint8_t* tier) {
+    MacStream st = {.s = echo_hash_mac(net_mac) ^ (0xCAC4E5u * (room + 1))};
+    *count = (uint8_t)(2 + mac_stream_next(&st) % 3); /* 2-4 */
+    *tier = mac_stream_next(&st) % 100 < 20 ? ShardBright : ShardDull;
+}
+
 uint8_t move_mult(const Move* m, uint8_t defender_type) {
     return m->type >= ECHO_TYPE_COUNT ? 100 : echo_type_mult(m->type, defender_type);
 }

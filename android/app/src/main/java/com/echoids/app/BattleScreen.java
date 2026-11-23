@@ -29,10 +29,10 @@ final class BattleScreen extends Screen {
         JSONObject b = Ui.obj(Engine.battle());
         if(!b.optBoolean("active")) return false;
         if(b.optString("result").equals("ongoing")) {
-            app.toast("Finish the battle first, or Run");
+            app.toast(b.optBoolean("canRun") ? "Finish the battle first, or Run" : "Finish the battle first");
             return true;
         }
-        Engine.battleClose();
+        app.toast(Ui.obj(Engine.battleClose()).optString("msg"));
         return false;
     }
 
@@ -79,14 +79,22 @@ final class BattleScreen extends Screen {
                 int p = Ui.dp(app, 12);
                 actions.setPadding(p, Ui.dp(app, 8), p, 0);
                 Button sw = Ui.secondaryButton(app, "Switch", v -> switchDialog(false));
-                Button ball = Ui.secondaryButton(app, "Ball", v -> ballDialog(b));
-                Button run = Ui.secondaryButton(app, "Run", v -> app.act(Engine.battleRun()));
                 actions.addView(sw, Ui.weight(1));
-                actions.addView(Ui.space(app, 8, 1));
-                actions.addView(ball, Ui.weight(1));
-                actions.addView(Ui.space(app, 8, 1));
-                actions.addView(run, Ui.weight(1));
+                /* No balls and no running in a dungeon: the engine says which apply. */
+                if(b.optBoolean("canCatch")) {
+                    actions.addView(Ui.space(app, 8, 1));
+                    actions.addView(Ui.secondaryButton(app, "Ball", v -> ballDialog(b)), Ui.weight(1));
+                }
+                if(b.optBoolean("canRun")) {
+                    actions.addView(Ui.space(app, 8, 1));
+                    actions.addView(Ui.secondaryButton(app, "Run", v -> app.act(Engine.battleRun())), Ui.weight(1));
+                }
                 col.addView(actions);
+                if(b.optBoolean("inDungeon")) {
+                    TextView note = Ui.text(app, b.optString("catchBlocked") + " · No running", 13, Ui.MUTED);
+                    note.setPadding(p, Ui.dp(app, 8), p, 0);
+                    col.addView(note);
+                }
             }
         } else {
             col.addView(outcome(b, result, wild));
@@ -203,8 +211,8 @@ final class BattleScreen extends Screen {
         if(b.optInt("xp") > 0) c.addView(Ui.text(app, b.optInt("xp") + " XP shared by everyone who fought", 13, Ui.MUTED));
         c.addView(Ui.space(app, 1, 12));
         c.addView(Ui.button(app, "Continue", v -> {
-            Engine.battleClose();
             app.pop();
+            app.act(Engine.battleClose());
         }));
         return c;
     }

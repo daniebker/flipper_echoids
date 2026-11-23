@@ -175,3 +175,45 @@ size_t scanner_record_split(const char* buf, size_t len) {
     if(cut > 0 && buf[cut - 1] == '-') cut--;
     return cut;
 }
+
+bool scanner_parse_ap_list(const char* line, int* index, char* essid, size_t size) {
+    /* "[3][CH:6] My Net -60", maybe followed by " (selected)" */
+    if(line[0] != '[') return false;
+    char* end;
+    long i = strtol(line + 1, &end, 10);
+    if(end == line + 1 || *end != ']' || strncmp(end + 1, "[CH:", 4) != 0) return false;
+    const char* p = strchr(end + 1, ']');
+    if(!p || p[1] != ' ') return false;
+    p += 2;
+    size_t len = strlen(p);
+    static const char sel[] = " (selected)";
+    if(len >= sizeof(sel) - 1 && strcmp(p + len - (sizeof(sel) - 1), sel) == 0) len -= sizeof(sel) - 1;
+    /* The last word is the RSSI. */
+    size_t cut = len;
+    while(cut > 0 && p[cut - 1] != ' ')
+        cut--;
+    if(cut == 0) return false;
+    char* rssi_end;
+    strtol(p + cut, &rssi_end, 10);
+    if(rssi_end == p + cut || rssi_end != p + len) return false;
+    len = cut - 1;
+    if(len >= size) len = size - 1;
+    memcpy(essid, p, len);
+    essid[len] = '\0';
+    *index = (int)i;
+    return true;
+}
+
+int scanner_parse_join(const char* line) {
+    if(strstr(line, "IP address:")) return 1;
+    if(strstr(line, "Could not connect") || strstr(line, "did not provide the proper args")) return -1;
+    return 0;
+}
+
+bool scanner_ssid_matches(const char* listed, const char* wanted) {
+    size_t n = strlen(wanted);
+    if(n == 0) return false;
+    /* Names we keep are cut to SCAN_NAME_LEN - 1 characters: match the start. */
+    if(n >= SCAN_NAME_LEN - 1) return strncmp(listed, wanted, n) == 0;
+    return strcmp(listed, wanted) == 0;
+}

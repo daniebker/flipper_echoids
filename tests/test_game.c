@@ -599,7 +599,71 @@ static void test_shared_rules(void) {
     CHECK(echo_moves_learned(mac, 1, MAX_LEVEL, got, 2) == 2);
 }
 
+static void test_dungeons(void) {
+    unsigned same_type = 0, foes = 0, boss_same = 0, nets = 300;
+    for(unsigned n = 0; n < nets; n++) {
+        uint8_t mac[6] = {0xA4, 0x12, (uint8_t)(n >> 8), (uint8_t)n, 0x5C, (uint8_t)(n * 7)};
+        DungeonLayout a, b;
+        dungeon_layout(mac, &a);
+        dungeon_layout(mac, &b);
+        CHECK(memcmp(&a, &b, sizeof(a)) == 0); /* same network, same dungeon */
+        CHECK(a.rooms >= DUNGEON_ROOMS_MIN + 1 && a.rooms <= DUNGEON_ROOMS_MAX + 1);
+        CHECK(a.kind[a.rooms - 1] == RoomBoss);
+        CHECK(a.kind[0] == RoomFight);
+        unsigned rests = 0;
+        for(uint8_t r = 0; r < a.rooms; r++) {
+            if(a.kind[r] == RoomRest) rests++;
+            if(r < a.rooms - 1) CHECK(a.kind[r] != RoomBoss);
+            if(a.kind[r] == RoomFight || a.kind[r] == RoomBoss) {
+                EchoGenes g;
+                echo_genes(a.foe[r], &g);
+                if(a.kind[r] == RoomBoss)
+                    boss_same += g.type == a.type;
+                else {
+                    foes++;
+                    same_type += g.type == a.type;
+                }
+            }
+        }
+        CHECK(rests <= 1);
+        char name[NAME_LEN + 12], again[NAME_LEN + 12];
+        dungeon_name(mac, name, sizeof(name));
+        dungeon_name(mac, again, sizeof(again));
+        CHECK(strcmp(name, again) == 0 && strstr(name, dungeon_place_name(a.type)) != NULL);
+        uint8_t count, tier;
+        dungeon_cache(mac, 2, &count, &tier);
+        CHECK(count >= 2 && count <= 4 && tier <= ShardBright);
+    }
+    /* Foes lean towards the dungeon's element. */
+    CHECK(same_type * 100 / foes > 70);
+    CHECK(boss_same * 100 / nets > 90);
+    CHECK(dungeon_foe_level(10, false) == 10);
+    CHECK(dungeon_foe_level(10, true) == 10 + DUNGEON_BOSS_LEVELS);
+    CHECK(dungeon_foe_level(MAX_LEVEL, true) == MAX_LEVEL);
+    printf("dungeons: %u%% of foes and %u%% of bosses share the element\n", same_type * 100 / foes, boss_same * 100 / nets);
+}
+
+static void test_join_parsing(void) {
+    int idx = -1;
+    char essid[40];
+    CHECK(scanner_parse_ap_list("[3][CH:6] My Home Net -60", &idx, essid, sizeof(essid)));
+    CHECK(idx == 3 && strcmp(essid, "My Home Net") == 0);
+    CHECK(scanner_parse_ap_list("[12][CH:11] Cafe -71 (selected)", &idx, essid, sizeof(essid)));
+    CHECK(idx == 12 && strcmp(essid, "Cafe") == 0);
+    CHECK(!scanner_parse_ap_list("[0][RSSI:-70] Headphones", &idx, essid, sizeof(essid)));
+    CHECK(!scanner_parse_ap_list("-60 Ch: 6 aa:bb:cc:dd:ee:ff ESSID: X", &idx, essid, sizeof(essid)));
+    CHECK(scanner_parse_join("IP address: 192.168.1.42") == 1);
+    CHECK(scanner_parse_join("Could not connect to WiFi network") == -1);
+    CHECK(scanner_parse_join("Connecting to WiFi.....") == 0);
+    CHECK(scanner_ssid_matches("Cafe", "Cafe"));
+    CHECK(!scanner_ssid_matches("Cafe 5G", "Cafe"));
+    CHECK(scanner_ssid_matches("A very long network name", "A very long netwo")); /* ours was cut short */
+    CHECK(!scanner_ssid_matches("Anything", ""));
+}
+
 int main(void) {
+    test_join_parsing();
+    test_dungeons();
     test_shared_rules();
     test_parser();
     test_marauder_current();

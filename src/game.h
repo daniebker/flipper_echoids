@@ -225,6 +225,38 @@ uint8_t ball_mult_x10(uint8_t ball); /* 10 = x1.0 */
 void active_window_len(uint8_t rarity, uint8_t* lo, uint8_t* hi);
 uint32_t battle_xp_reward(uint8_t wild_level, uint8_t rarity, bool captured);
 
+/* ---------- Dungeons ---------- */
+
+/* Jacking in to a WiFi network opens its dungeon: a row of rooms ending in a
+ * boss, the same every time for the same network. */
+#define DUNGEON_ROOMS_MIN 4 /* rooms before the boss */
+#define DUNGEON_ROOMS_MAX 6
+#define DUNGEON_BOSS_LEVELS 3 /* the boss is this many levels above the team */
+#define DUNGEON_REST_PCT 50 /* a rest heals this % of max HP (fainted ones stay down) */
+
+typedef enum {
+    RoomFight,
+    RoomCache, /* shards to pick up */
+    RoomRest, /* the team recovers HP */
+    RoomBoss,
+} RoomKind;
+
+typedef struct {
+    uint8_t type; /* the dungeon's element */
+    uint8_t rooms; /* including the boss room, which is always last */
+    uint8_t kind[DUNGEON_ROOMS_MAX + 1];
+    uint8_t foe[DUNGEON_ROOMS_MAX + 1][6]; /* the echoid in each fight and the boss room */
+} DungeonLayout;
+
+void dungeon_layout(const uint8_t net_mac[6], DungeonLayout* out);
+/* "Wavern Reef": a name made from the network's MAC and the dungeon's element. */
+void dungeon_name(const uint8_t net_mac[6], char* out, size_t size);
+const char* dungeon_place_name(uint8_t type);
+/* The level of a dungeon's echoids for a team at this (average) level. */
+uint8_t dungeon_foe_level(uint8_t team_level, bool boss);
+/* A cache room's shards: how many, of the dungeon's element, and the tier. */
+void dungeon_cache(const uint8_t net_mac[6], uint8_t room, uint8_t* count, uint8_t* tier);
+
 /* ---------- Team ---------- */
 /* Removes team[idx] into *out, keeping order. Refuses the last member. The
  * lead index follows its echoid; if the lead itself leaves, the first

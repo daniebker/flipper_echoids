@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "gui/modules/text_input.h"
 #include "scanner_phone.h"
 #include "shim.h"
 
@@ -64,6 +65,16 @@ static int battle_over(void) {
     return black > 110;
 }
 
+/* The dungeon screen has a full-width divider at row 52. */
+static int on_dungeon_screen(void) {
+    usleep(150000);
+    shim_render(fb);
+    int black = 0;
+    for(int x = 0; x < 128; x++)
+        black += fb[52][x];
+    return black == 128;
+}
+
 static void press(InputKey k) {
     shim_input(k, InputTypeShort);
     usleep(120000);
@@ -101,6 +112,8 @@ int main(void) {
     usleep(1500000);
     check_screen("collect_list");
     press(InputKeyOk);
+    check_screen("collect_popup");
+    press(InputKeyOk); /* Battle! */
     check_screen("battle");
     press(InputKeyOk);
     check_screen("moves");
@@ -115,8 +128,38 @@ int main(void) {
         printf("FAIL: couldn't leave the battle\n");
         failures++;
     }
+    press(InputKeyOk); /* continue, back to Collect */
+
+    /* Jack in to the network: password, connecting, then its dungeon. */
+    shim_text_input_answer("secret");
+    press(InputKeyOk);
+    press(InputKeyDown); /* Jack in */
+    press(InputKeyOk);
+    check_screen("jacking_in");
+    usleep(3200000); /* connecting, then the "Jacked in" popup fades */
+    if(!on_dungeon_screen()) {
+        printf("FAIL: didn't reach the dungeon\n");
+        failures++;
+    }
+    check_screen("dungeon");
+    press(InputKeyOk); /* the first room is always a fight */
+    check_screen("dungeon_battle");
+    for(int tries = 0; tries < 200 && !battle_over(); tries++)
+        press(InputKeyOk); /* Hit, first move (or send in the next echoid) */
     press(InputKeyOk); /* continue */
-    press(InputKeyBack);
+    if(!on_dungeon_screen()) press(InputKeyOk); /* the results */
+    if(on_dungeon_screen()) {
+        check_screen("dungeon_after_fight");
+        press(InputKeyBack);
+        check_screen("dungeon_menu");
+        press(InputKeyDown);
+        press(InputKeyDown);
+        press(InputKeyDown);
+        press(InputKeyOk); /* Jack out: "Sure?" */
+        press(InputKeyOk);
+    } else {
+        printf("(the team was ejected from the dungeon)\n");
+    }
     check_screen("menu_again");
     press(InputKeyDown);
     press(InputKeyOk);

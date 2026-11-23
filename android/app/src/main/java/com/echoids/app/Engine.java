@@ -49,4 +49,14 @@ final class Engine {
     static native String swap(int pacIndex, int teamIndex);
     static native String setBluetooth(boolean on);
     static native String reset();
+
+    /* Dungeons */
+    static native String dungeon();
+    static native String jackInCheck(int nearbyIndex);
+    static native void linkUp(byte[] mac);
+    static native void linkDown();
+    static native String jackIn(int nearbyIndex);
+    static native String dungeonRoom();
+    static native String dungeonNext();
+    static native String dungeonLeave();
 }

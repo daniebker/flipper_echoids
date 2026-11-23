@@ -171,6 +171,10 @@ final class DetailScreen extends Screen {
                                                                "You've already fought this one. Find others, or come back another time.",
                     14, Ui.MUTED));
             }
+            /* Any network you can connect to has a dungeon. */
+            box.addView(Ui.space(app, 1, 8));
+            box.addView(Ui.secondaryButton(app, "🔌 Jack in to " + e.optString("ssid"),
+                v -> JackIn.start(app, index, e.optString("ssid"), e.optString("mac"))));
         } else if(where == Engine.WHERE_TEAM) {
             if(!e.optBoolean("lead")) box.addView(Ui.button(app, "Make lead", v -> app.act(Engine.setLead(index))));
             box.addView(Ui.space(app, 1, 8));

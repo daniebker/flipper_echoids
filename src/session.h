@@ -4,6 +4,7 @@
  * This is the only place the session rules live: the save and starter,
  * scanning visits, the nearby list and time of day, shard
  * claims, battles and what follows them (catching, storing, wins, XP results),
+ * dungeons,
  * items, crafting, team and PAC moves, HP regeneration and autosave. The
  * Flipper app (echoids.c) and the Android app (android/.../cpp) both drive a
  * Session and only draw it: neither makes game decisions of its own.
@@ -51,6 +52,7 @@ typedef enum {
     SessionEventSpotted, /* a wild echoid is out nearby (mac) */
     SessionEventShard, /* a shard was collected (shard) */
     SessionEventRecharge, /* a device's shard is still recharging (shard) */
+    SessionEventEjected, /* thrown out of a dungeon (the connection dropped) */
 } SessionEventKind;
 
 typedef struct {
@@ -67,6 +69,19 @@ typedef enum {
     ItemUseRevive,
     ItemUseXp,
 } ItemUse;
+
+/* The dungeon you're jacked in to, if any. */
+typedef struct {
+    bool active;
+    uint8_t mac[6]; /* the network */
+    char ssid[NAME_LEN];
+    char name[NAME_LEN + 12];
+    DungeonLayout map;
+    uint8_t room; /* current room, 0 .. map.rooms - 1 */
+    bool room_done;
+    bool cleared; /* the boss is beaten */
+    bool link_lost; /* the connection dropped during a fight: out after it */
+} Dungeon;
 
 typedef struct {
     SaveData save;
@@ -94,11 +109,17 @@ typedef struct {
 
     /* Battle */
     bool in_battle;
+    bool battle_in_dungeon;
     bool must_switch; /* the active echoid fainted: pick a replacement */
     int8_t battle_nearby;
     Battle battle;
     char results[SESSION_RESULTS_MAX][SESSION_RESULT_LEN];
     uint8_t result_count;
+
+    /* Jacking in: the platform connects to a network and reports it here. */
+    bool link_up;
+    uint8_t link_mac[6];
+    Dungeon dungeon;
 
     SessionEvent events[SESSION_EVENTS_MAX];
     uint8_t event_count;
@@ -148,6 +169,32 @@ bool session_battle_ball(Session* s, uint8_t ball);
 bool session_battle_run(Session* s);
 /* Leaves a finished battle. */
 bool session_battle_close(Session* s);
+
+/* ---- Dungeons ----
+ * 1. session_jack_in_check(): may the player jack in to this nearby network?
+ * 2. The platform connects to the network (asking for its password), then
+ *    calls session_link_up() with its MAC, or gives up.
+ * 3. session_jack_in() opens the network's dungeon. While inside, only the
+ *    dungeon, the team and the bag are available. Echoids there can't be
+ *    caught, and nobody runs from a fight.
+ * 4. session_dungeon_room() plays the current room (a fight starts a battle);
+ *    session_dungeon_next() goes deeper once it's done. Beating the boss
+ *    clears the dungeon. A wiped-out team or a dropped connection
+ *    (session_link_down()) throws you out; session_dungeon_leave() jacks out.
+ * While session_wants_link() is false, the platform can disconnect. */
+bool session_jack_in_check(Session* s, uint8_t nearby_index);
+void session_link_up(Session* s, const uint8_t mac[6]);
+void session_link_down(Session* s);
+bool session_wants_link(const Session* s);
+bool session_jack_in(Session* s, uint8_t nearby_index);
+bool session_in_dungeon(const Session* s);
+/* Team level the dungeon's echoids match: the team's average, rounded up. */
+uint8_t session_team_level(const Session* s);
+/* The echoid in a fight or boss room, at the level it would fight at. */
+bool session_dungeon_foe(Session* s, uint8_t room, Echoid* out);
+bool session_dungeon_room(Session* s);
+bool session_dungeon_next(Session* s);
+bool session_dungeon_leave(Session* s);
 
 /* ---- Items, crafting, team and PAC ---- */
 bool session_craft(Session* s, size_t recipe);

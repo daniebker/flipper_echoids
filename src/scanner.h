@@ -115,12 +115,33 @@ void scanner_last_rx(Scanner* s, char* out, size_t size);
 /* Copies the raw RX/TX log, oldest first. Returns number of lines. */
 size_t scanner_get_log(Scanner* s, char out[SCAN_LOG_LINES][SCAN_LOG_LEN]);
 
+/* Jacking in: connects the board to a WiFi network. It finds the network in
+ * the board's list of access points (scanning briefly if it isn't there),
+ * then joins it. Poll with scanner_poll() as usual (it yields no sightings
+ * meanwhile) and watch scanner_join_state(). */
+typedef enum {
+    ScanJoinIdle,
+    ScanJoinFinding, /* looking for the network on the board */
+    ScanJoinConnecting,
+    ScanJoinConnected,
+    ScanJoinFailed, /* scanner_error() says why */
+} ScanJoinState;
+
+bool scanner_join(Scanner* s, const ScanConfig* cfg, const char* ssid, const char* password);
+ScanJoinState scanner_join_state(Scanner* s);
+
 /* 5V helpers for calibration, which keeps the board powered across retries. */
 bool scanner_power_on(void); /* returns true if it was turned on by this call */
 void scanner_power_off(void);
 
 /* Exposed for testing: parse one line of Marauder (or simple CSV) output. */
 bool scanner_parse_line(const char* line, ScanPhase phase, ScanEvent* out);
+/* One line of Marauder's "list -a": "[3][CH:6] My Net -60". */
+bool scanner_parse_ap_list(const char* line, int* index, char* essid, size_t size);
+/* Marauder's answer to "join": 1 connected, -1 failed, 0 not about joining. */
+int scanner_parse_join(const char* line);
+/* Is a listed network the one we want (ours may be cut short)? */
+bool scanner_ssid_matches(const char* listed, const char* wanted);
 /* If buf (NUL terminated, len chars) ends with the start of a second
  * "<rssi> Device: " record, returns where the first record ends, else 0. */
 size_t scanner_record_split(const char* buf, size_t len);

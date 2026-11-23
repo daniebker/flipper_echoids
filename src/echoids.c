@@ -10,6 +10,8 @@
 #include <furi_hal_rtc.h>
 #include <gui/gui.h>
 #include <gui/elements.h>
+#include <gui/view_dispatcher.h>
+#include <gui/modules/text_input.h>
 #include <input/input.h>
 #include <notification/notification_messages.h>
 
@@ -52,6 +54,8 @@ typedef enum {
     ScreenMovePick, /* battle: choose one of the active echoid's moves */
     ScreenBattleSwap, /* battle: choose a team member to send in */
     ScreenBattleResult, /* after a battle: XP, level-ups and new moves per echoid */
+    ScreenJackIn, /* the board is connecting to a network */
+    ScreenDungeon,
 } Screen;
 
 typedef struct {
@@ -74,6 +78,13 @@ typedef struct {
 
     uint8_t nearby_idx;
     uint8_t nearby_scroll;
+    bool collect_menu; /* Battle / Jack in popup on Collect */
+    uint8_t collect_menu_idx;
+
+    /* Jacking in and dungeons */
+    uint8_t jack_index; /* nearby echoid whose network we're joining */
+    bool dungeon_battle; /* the battle on screen is a dungeon fight */
+    bool confirm_jack_out;
 
     uint8_t battle_menu;
     uint8_t move_idx;
@@ -289,10 +300,24 @@ enum {
     MenuCraft,
     MenuBag,
     MenuSettings,
+    MenuDungeon,
+    MenuJackOut,
 };
-static const char* const menu_items[] = {"Collect", "Team", "PAC", "Craft", "Bag", "Settings"};
-#define MENU_COUNT (sizeof(menu_items) / sizeof(menu_items[0]))
-#define MENU_ROWS  5
+static const char* const menu_names[] =
+    {"Collect", "Team", "PAC", "Craft", "Bag", "Settings", "Dungeon", "Jack out"};
+/* What the menu offers: in a dungeon, only the dungeon, team and bag. */
+static const uint8_t menu_normal[] = {MenuCollect, MenuTeam, MenuPac, MenuCraft, MenuBag, MenuSettings};
+static const uint8_t menu_dungeon[] = {MenuDungeon, MenuTeam, MenuBag, MenuJackOut};
+#define MENU_ROWS 5
+
+static const uint8_t* menu_list(App* app, uint8_t* count) {
+    if(session_in_dungeon(&app->s)) {
+        *count = sizeof(menu_dungeon);
+        return menu_dungeon;
+    }
+    *count = sizeof(menu_normal);
+    return menu_normal;
+}
 
 static void draw_intro(App* app, Canvas* canvas) {
     Echoid* e = session_lead(&app->s);
@@ -320,15 +345,21 @@ static void draw_menu(App* app, Canvas* canvas) {
     Echoid* e = session_lead(&app->s);
     EchoStats s;
     echo_stats(e, &s);
-    draw_title(canvas, "Echoids", NULL);
+    uint8_t count;
+    const uint8_t* items = menu_list(app, &count);
+    draw_title(canvas, session_in_dungeon(&app->s) ? "Jacked in" : "Echoids", NULL);
     for(uint8_t row = 0; row < MENU_ROWS; row++) {
         uint8_t i = app->menu_scroll + row;
-        if(i >= MENU_COUNT) break;
+        if(i >= count) break;
         int y = 23 + row * 10;
         /* Stop short of the scrollbar and the lead echoid panel (divider at x=84). */
         draw_row_w(canvas, y, i == app->menu_idx, 79);
-        canvas_draw_str(canvas, 4, y, menu_items[i]);
-        if(i == MenuPac) {
+        canvas_draw_str(
+            canvas,
+            4,
+            y,
+            items[i] == MenuJackOut && app->confirm_jack_out ? "Sure? OK!" : menu_names[items[i]]);
+        if(items[i] == MenuPac) {
             /* How many echoids are in storage */
             char n[12];
             snprintf(n, sizeof(n), "%lu", (unsigned long)app->s.save.pac_count);
@@ -336,7 +367,7 @@ static void draw_menu(App* app, Canvas* canvas) {
         }
     }
     canvas_set_color(canvas, ColorBlack);
-    elements_scrollbar_pos(canvas, 82, 14, 49, app->menu_idx, MENU_COUNT);
+    elements_scrollbar_pos(canvas, 82, 14, 49, app->menu_idx, count);
     /* Lead echoid panel */
     canvas_draw_line(canvas, 84, 13, 84, 63);
     draw_sprite(canvas, e->mac, 90, 15, 2);
@@ -511,6 +542,99 @@ static void draw_collect(App* app, Canvas* canvas) {
             buf, sizeof(buf), "HP%u ATK%u DEF%u SPD%u", st.max_hp, st.atk, st.def, st.spd);
         canvas_draw_str(canvas, 2, 63, buf);
     }
+    if(app->collect_menu) {
+        static const char* const opts[] = {"Battle!", "Jack in"};
+        canvas_set_color(canvas, ColorWhite);
+        canvas_draw_box(canvas, 70, 14, 56, 28);
+        canvas_set_color(canvas, ColorBlack);
+        canvas_draw_rframe(canvas, 70, 14, 56, 28, 2);
+        for(uint8_t i = 0; i < 2; i++) {
+            int y = 26 + i * 11;
+            if(i == app->collect_menu_idx) {
+                canvas_draw_box(canvas, 72, y - 9, 52, 11);
+                canvas_set_color(canvas, ColorWhite);
+            }
+            canvas_draw_str(canvas, 76, y, opts[i]);
+            canvas_set_color(canvas, ColorBlack);
+        }
+    }
+    draw_toast(app, canvas);
+}
+
+static void draw_jack_in(App* app, Canvas* canvas) {
+    const Nearby* n = &app->s.nearby[app->jack_index % SESSION_NEARBY_MAX];
+    draw_title(canvas, "Jacking in", NULL);
+    canvas_set_font(canvas, FontSecondary);
+    canvas_draw_str_aligned(canvas, 64, 24, AlignCenter, AlignCenter, n->ssid);
+    const char* what = "Waking the board...";
+    if(scanner_booting(app->scanner)) {
+        what = "Powering up board...";
+    } else if(scanner_join_state(app->scanner) == ScanJoinConnecting) {
+        what = "Connecting...";
+    } else if(scanner_join_state(app->scanner) == ScanJoinFinding) {
+        what = "Finding the network...";
+    }
+    canvas_draw_str_aligned(canvas, 64, 38, AlignCenter, AlignCenter, what);
+    /* A little activity bar */
+    int x = (int)((furi_get_tick() / 60) % 100);
+    canvas_draw_frame(canvas, 14, 46, 100, 5);
+    canvas_draw_box(canvas, 14 + (x < 80 ? x : 80), 47, 20, 3);
+    canvas_draw_str_aligned(canvas, 64, 62, AlignCenter, AlignBottom, "Back: cancel");
+    draw_toast(app, canvas);
+}
+
+static void draw_dungeon(App* app, Canvas* canvas) {
+    const Dungeon* d = &app->s.dungeon;
+    char buf[40];
+    snprintf(buf, sizeof(buf), "%u/%u", d->room + 1, d->map.rooms);
+    draw_title(canvas, d->name, buf);
+
+    /* The path: one box per room, done ones filled in, the current one framed twice. */
+    static const char kinds[] = {'x', '$', 'z', 'B'}; /* fight, cache, rest, boss */
+    int w = 13, x0 = 64 - (d->map.rooms * w) / 2;
+    for(uint8_t r = 0; r < d->map.rooms; r++) {
+        int x = x0 + r * w;
+        bool done = r < d->room || (r == d->room && d->room_done);
+        char k[2] = {kinds[d->map.kind[r] % 4], '\0'};
+        if(done) {
+            canvas_draw_box(canvas, x, 15, 11, 11);
+            canvas_set_color(canvas, ColorWhite);
+        } else {
+            canvas_draw_frame(canvas, x, 15, 11, 11);
+        }
+        if(r == d->room) canvas_draw_frame(canvas, x - 1, 14, 13, 13);
+        canvas_draw_str_aligned(canvas, x + 6, 21, AlignCenter, AlignCenter, k);
+        canvas_set_color(canvas, ColorBlack);
+    }
+
+    /* This room */
+    uint8_t kind = d->map.kind[d->room];
+    Echoid foe;
+    const char* hint;
+    if(d->cleared) {
+        canvas_draw_str_aligned(canvas, 64, 38, AlignCenter, AlignCenter, "The boss is beaten!");
+        hint = "Jack out from the menu";
+    } else if(d->room_done) {
+        canvas_draw_str_aligned(canvas, 64, 38, AlignCenter, AlignCenter, "Room cleared");
+        hint = "OK: go deeper";
+    } else if(session_dungeon_foe(&app->s, d->room, &foe)) {
+        draw_sprite(canvas, foe.mac, 2, 29, 1);
+        char name[ECHO_NAME_LEN];
+        echo_name(foe.mac, name, sizeof(name));
+        EchoGenes g;
+        echo_genes(foe.mac, &g);
+        snprintf(buf, sizeof(buf), "%s%s L%u", kind == RoomBoss ? "BOSS " : "", name, foe.level);
+        canvas_draw_str(canvas, 22, 36, buf);
+        snprintf(buf, sizeof(buf), "%s %s", echo_type_name(g.type), echo_rarity_name(g.rarity));
+        canvas_draw_str(canvas, 22, 45, buf);
+        hint = kind == RoomBoss ? "OK: face the boss" : "OK: fight";
+    } else {
+        canvas_draw_str_aligned(
+            canvas, 64, 38, AlignCenter, AlignCenter, kind == RoomCache ? "A cache of shards" : "A place to rest");
+        hint = kind == RoomCache ? "OK: open it" : "OK: rest";
+    }
+    canvas_draw_line(canvas, 0, 52, 127, 52);
+    canvas_draw_str_aligned(canvas, 64, 63, AlignCenter, AlignBottom, hint);
     draw_toast(app, canvas);
 }
 
@@ -1080,6 +1204,12 @@ static void draw_callback(Canvas* canvas, void* ctx) {
         break;
     case ScreenBattleResult:
         draw_battle_result(app, canvas);
+        break;
+    case ScreenJackIn:
+        draw_jack_in(app, canvas);
+        break;
+    case ScreenDungeon:
+        draw_dungeon(app, canvas);
         break;
     case ScreenTeam:
         draw_team(app, canvas);
@@ -1675,6 +1805,160 @@ static void battle_after_action(App* app) {
 }
 
 /* ------------------------------------------------------------------------- */
+/* Jacking in and dungeons                                                   */
+/* ------------------------------------------------------------------------- */
+
+typedef struct {
+    ViewDispatcher* dispatcher;
+    bool entered;
+} PasswordPrompt;
+
+static void password_done(void* ctx) {
+    PasswordPrompt* p = ctx;
+    p->entered = true;
+    view_dispatcher_stop(p->dispatcher);
+}
+
+static bool password_back(void* ctx) {
+    PasswordPrompt* p = ctx;
+    view_dispatcher_stop(p->dispatcher);
+    return true;
+}
+
+/* Asks for a network's password on the Flipper keyboard (empty for an open
+ * network). Our own screen is set aside meanwhile. False if cancelled. */
+static bool ask_password(App* app, const char* ssid, char* out, size_t size) {
+    view_port_enabled_set(app->view_port, false);
+    gui_remove_view_port(app->gui, app->view_port);
+
+    PasswordPrompt prompt = {.dispatcher = view_dispatcher_alloc(), .entered = false};
+    TextInput* input = text_input_alloc();
+    char header[40];
+    snprintf(header, sizeof(header), "%.18s password (none: OK)", ssid);
+    text_input_set_header_text(input, header);
+    text_input_set_minimum_length(input, 0);
+    out[0] = '\0';
+    text_input_set_result_callback(input, password_done, &prompt, out, size, true);
+    view_dispatcher_add_view(prompt.dispatcher, 0, text_input_get_view(input));
+    view_dispatcher_set_event_callback_context(prompt.dispatcher, &prompt);
+    view_dispatcher_set_navigation_event_callback(prompt.dispatcher, password_back);
+    view_dispatcher_attach_to_gui(prompt.dispatcher, app->gui, ViewDispatcherTypeFullscreen);
+    view_dispatcher_switch_to_view(prompt.dispatcher, 0);
+    view_dispatcher_run(prompt.dispatcher);
+
+    view_dispatcher_remove_view(prompt.dispatcher, 0);
+    view_dispatcher_free(prompt.dispatcher);
+    text_input_free(input);
+    gui_add_view_port(app->gui, app->view_port, GuiLayerFullscreen);
+    view_port_enabled_set(app->view_port, true);
+    return prompt.entered;
+}
+
+/* Jack in to the selected echoid's network: password, then the board joins it. */
+static void jack_in_start(App* app) {
+    uint8_t idx = app->nearby_idx;
+    if(!session_jack_in_check(&app->s, idx)) {
+        app_say(app);
+        return;
+    }
+    const Nearby* n = &app->s.nearby[idx];
+    if(!n->ssid[0] || strcmp(n->ssid, "<hidden>") == 0) {
+        app_toast(app, "Hidden networks can't join");
+        return;
+    }
+    /* Stop scanning: the board can't scan and connect at once. */
+    scanner_stop(app->scanner);
+    session_scan_stop(&app->s);
+    char password[64];
+    if(!ask_password(app, n->ssid, password, sizeof(password))) {
+        collect_start(app);
+        return;
+    }
+    ScanConfig cfg;
+    app_scan_config(app, &cfg);
+    app->jack_index = idx;
+    bool started = scanner_join(app->scanner, &cfg, n->ssid, password);
+    memset(password, 0, sizeof(password));
+    if(!started) {
+        app_toast(app, scanner_error(app->scanner) ? scanner_error(app->scanner) : "Scanner error");
+        collect_start(app);
+        return;
+    }
+    app->screen = ScreenJackIn;
+}
+
+/* Watches the board connect, then enters the dungeon. */
+static void jack_in_tick(App* app) {
+    ScanJoinState st = scanner_join_state(app->scanner);
+    if(st == ScanJoinConnected) {
+        session_link_up(&app->s, app->s.nearby[app->jack_index].mac);
+        if(session_jack_in(&app->s, app->jack_index)) {
+            notification_message(app->notif, &sequence_success);
+            app_say(app);
+            app->screen = ScreenDungeon;
+            return;
+        }
+        app_say(app);
+    } else if(st == ScanJoinFailed) {
+        app_toast(app, scanner_error(app->scanner) ? scanner_error(app->scanner) : "Couldn't connect");
+        notification_message(app->notif, &sequence_error);
+    } else {
+        return;
+    }
+    scanner_stop(app->scanner);
+    session_link_down(&app->s);
+    collect_start(app);
+}
+
+static void jack_out(App* app) {
+    if(session_dungeon_leave(&app->s)) {
+        scanner_stop(app->scanner); /* the board leaves the network */
+        session_link_down(&app->s);
+        app->menu_idx = 0;
+        app->menu_scroll = 0;
+    }
+    app_say(app);
+}
+
+/* OK in the dungeon: play this room, or go deeper once it's done. */
+static void dungeon_ok(App* app) {
+    const Dungeon* d = &app->s.dungeon;
+    if(d->cleared) {
+        app_toast(app, "Cleared! Jack out: menu");
+    } else if(d->room_done) {
+        session_dungeon_next(&app->s);
+        app_say(app);
+    } else if(session_dungeon_room(&app->s)) {
+        if(app->s.in_battle) {
+            app->dungeon_battle = true;
+            app->battle_menu = 0;
+            app->screen = ScreenBattle;
+            notification_message(app->notif, &sequence_single_vibro);
+        } else {
+            notification_message(app->notif, &sequence_success);
+        }
+        app_say(app);
+    } else {
+        app_say(app);
+    }
+}
+
+/* Where to go when a battle is over. */
+static Screen after_battle_screen(App* app) {
+    bool was_dungeon = app->dungeon_battle;
+    app->dungeon_battle = false;
+    if(session_in_dungeon(&app->s)) return ScreenDungeon;
+    if(was_dungeon) {
+        /* Thrown out of the dungeon */
+        scanner_stop(app->scanner);
+        session_link_down(&app->s);
+        app->menu_idx = 0;
+        return ScreenMenu;
+    }
+    return ScreenCollect;
+}
+
+/* ------------------------------------------------------------------------- */
 /* Input                                                                     */
 /* ------------------------------------------------------------------------- */
 
@@ -1801,11 +2085,26 @@ static void handle_input(App* app, InputEvent* ev) {
         if(press && (ev->key == InputKeyOk || ev->key == InputKeyBack)) app->screen = ScreenMenu;
         break;
 
-    case ScreenMenu:
+    case ScreenMenu: {
+        uint8_t count;
+        const uint8_t* items = menu_list(app, &count);
+        if(app->menu_idx >= count) app->menu_idx = 0;
         if(dy) {
-            list_move(&app->menu_idx, &app->menu_scroll, MENU_COUNT, MENU_ROWS, dy);
+            list_move(&app->menu_idx, &app->menu_scroll, count, MENU_ROWS, dy);
+            app->confirm_jack_out = false;
         } else if(press && ev->key == InputKeyOk) {
-            switch(app->menu_idx) {
+            switch(items[app->menu_idx]) {
+            case MenuDungeon:
+                app->screen = ScreenDungeon;
+                break;
+            case MenuJackOut:
+                if(!app->confirm_jack_out) {
+                    app->confirm_jack_out = true;
+                } else {
+                    app->confirm_jack_out = false;
+                    jack_out(app);
+                }
+                break;
             case MenuCollect:
                 collect_start(app);
                 break;
@@ -1827,17 +2126,53 @@ static void handle_input(App* app, InputEvent* ev) {
                 break;
             }
         } else if(press && ev->key == InputKeyBack) {
-            app->running = false;
+            if(app->confirm_jack_out)
+                app->confirm_jack_out = false;
+            else
+                app->running = false;
+        }
+        break;
+    }
+
+    case ScreenCollect:
+        if(app->collect_menu) {
+            /* Battle the echoid, or jack in to its network */
+            if(dy) {
+                app->collect_menu_idx ^= 1;
+            } else if(press && ev->key == InputKeyBack) {
+                app->collect_menu = false;
+            } else if(press && ev->key == InputKeyOk) {
+                app->collect_menu = false;
+                if(app->collect_menu_idx == 0)
+                    battle_begin(app);
+                else
+                    jack_in_start(app);
+            }
+        } else if(dy) {
+            list_move(&app->nearby_idx, &app->nearby_scroll, app->s.nearby_count, NEARBY_ROWS, dy);
+        } else if(press && ev->key == InputKeyOk && app->s.nearby_count > 0) {
+            app->collect_menu = true;
+            app->collect_menu_idx = 0;
+        } else if(press && ev->key == InputKeyBack) {
+            collect_stop(app);
         }
         break;
 
-    case ScreenCollect:
-        if(dy) {
-            list_move(&app->nearby_idx, &app->nearby_scroll, app->s.nearby_count, NEARBY_ROWS, dy);
-        } else if(press && ev->key == InputKeyOk) {
-            battle_begin(app);
+    case ScreenJackIn:
+        if(press && ev->key == InputKeyBack) {
+            scanner_stop(app->scanner);
+            app_toast(app, "Jack in cancelled");
+            collect_start(app);
+        }
+        break;
+
+    case ScreenDungeon:
+        if(press && ev->key == InputKeyOk) {
+            dungeon_ok(app);
         } else if(press && ev->key == InputKeyBack) {
-            collect_stop(app);
+            app->menu_idx = 0;
+            app->menu_scroll = 0;
+            app->screen = ScreenMenu;
         }
         break;
 
@@ -1845,8 +2180,9 @@ static void handle_input(App* app, InputEvent* ev) {
         if(app->s.battle.result != BattleOngoing) {
             if(press && (ev->key == InputKeyOk || ev->key == InputKeyBack)) {
                 session_battle_close(&app->s);
+                app_say(app); /* e.g. ejected from the dungeon */
                 app->result_scroll = 0;
-                app->screen = app->s.battle.xp_gained ? ScreenBattleResult : ScreenCollect;
+                app->screen = app->s.battle.xp_gained ? ScreenBattleResult : after_battle_screen(app);
             }
             break;
         }
@@ -1887,7 +2223,7 @@ static void handle_input(App* app, InputEvent* ev) {
             if(n > max) n = max;
             app->result_scroll = (uint8_t)n;
         } else if(press && (ev->key == InputKeyOk || ev->key == InputKeyBack)) {
-            app->screen = ScreenCollect;
+            app->screen = after_battle_screen(app);
         }
         break;
 
@@ -2109,6 +2445,7 @@ static void app_tick(App* app) {
         if(!debug) session_sighting(&app->s, &ev);
 
     if(app->screen == ScreenCalibrate) calibrate_tick(app);
+    if(app->screen == ScreenJackIn) jack_in_tick(app);
 
     session_tick(&app->s);
 

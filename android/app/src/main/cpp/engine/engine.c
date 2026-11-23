@@ -219,6 +219,10 @@ char* engine_state_json(void) {
     json_kint(&j, "shardsFound", S.save.shards_found);
     json_kint(&j, "shardTotal", inventory_shard_total(&S.save.inv));
     json_kbool(&j, "inBattle", S.in_battle);
+    json_kbool(&j, "inDungeon", session_in_dungeon(&S));
+    json_kbool(&j, "wantsLink", session_wants_link(&S));
+    json_kint(&j, "dungeonsCleared", S.save.dungeons_cleared);
+    json_kint(&j, "teamLevel", session_team_level(&S));
     json_end_obj(&j);
     return json_finish(&j);
 }
@@ -303,6 +307,7 @@ char* engine_echoid_json(int where, uint32_t index) {
     if(where == 0) json_kbool(&j, "lead", index == S.save.lead);
     if(where == 2) {
         json_kint(&j, "rssi", S.nearby[index].rssi);
+        json_kstr(&j, "ssid", S.nearby[index].ssid);
         json_kstr(&j, "state", nearby_state(S.nearby[index].state));
     }
     json_end_obj(&j);
@@ -394,6 +399,8 @@ char* engine_battle_json(void) {
         for(int i = 0; i < BATTLE_LOG_LINES; i++)
             if(b->log[i][0]) json_str(&j, b->log[i]);
         json_end_arr(&j);
+        json_kbool(&j, "inDungeon", S.battle_in_dungeon);
+        json_kbool(&j, "canRun", !S.battle_in_dungeon);
         const char* blocked = session_catch_blocked(&S);
         json_kbool(&j, "canCatch", blocked == NULL);
         json_kstr(&j, "catchBlocked", blocked ? blocked : "");
@@ -428,6 +435,7 @@ char* engine_take_events_json(void) {
     while(session_take_event(&S, &ev)) {
         const char* kind = ev.kind == SessionEventSpotted  ? "spotted" :
                            ev.kind == SessionEventRecharge ? "recharge" :
+                           ev.kind == SessionEventEjected  ? "ejected" :
                            ev.shard.tier == ShardPrismatic ? "shard_rare" :
                                                              "shard";
         json_obj(&j);
@@ -485,4 +493,72 @@ char* engine_set_bluetooth(bool on) {
 }
 char* engine_reset(void) {
     return result(session_reset(&S));
+}
+
+/* ------------------------------------------------------------------------- */
+/* Dungeons                                                                  */
+/* ------------------------------------------------------------------------- */
+
+char* engine_dungeon_json(void) {
+    static const char* const kinds[] = {"fight", "cache", "rest", "boss"};
+    const Dungeon* d = &S.dungeon;
+    Json j;
+    json_init(&j);
+    json_obj(&j);
+    json_kbool(&j, "active", d->active);
+    if(d->active) {
+        char mac[18];
+        mac_hex(d->mac, mac);
+        json_kstr(&j, "name", d->name);
+        json_kstr(&j, "ssid", d->ssid);
+        json_kstr(&j, "mac", mac);
+        json_kint(&j, "type", d->map.type);
+        json_kstr(&j, "typeName", echo_type_name(d->map.type));
+        json_kint(&j, "room", d->room);
+        json_kbool(&j, "roomDone", d->room_done);
+        json_kbool(&j, "cleared", d->cleared);
+        json_kint(&j, "level", dungeon_foe_level(session_team_level(&S), false));
+        json_kint(&j, "bossLevel", dungeon_foe_level(session_team_level(&S), true));
+        json_key(&j, "rooms");
+        json_arr(&j);
+        for(uint8_t r = 0; r < d->map.rooms; r++) {
+            json_obj(&j);
+            json_kstr(&j, "kind", kinds[d->map.kind[r] % 4]);
+            json_kbool(&j, "done", r < d->room || (r == d->room && d->room_done));
+            json_kbool(&j, "current", r == d->room);
+            Echoid foe;
+            if(session_dungeon_foe(&S, r, &foe)) {
+                json_key(&j, "foe");
+                json_obj(&j);
+                put_echoid(&j, &foe);
+                json_end_obj(&j);
+            }
+            json_end_obj(&j);
+        }
+        json_end_arr(&j);
+    }
+    json_end_obj(&j);
+    return json_finish(&j);
+}
+
+char* engine_jack_in_check(uint32_t i) {
+    return result(i < SESSION_NEARBY_MAX && session_jack_in_check(&S, (uint8_t)i));
+}
+void engine_link_up(const uint8_t mac[6]) {
+    if(ready) session_link_up(&S, mac);
+}
+void engine_link_down(void) {
+    if(ready) session_link_down(&S);
+}
+char* engine_jack_in(uint32_t i) {
+    return result(i < SESSION_NEARBY_MAX && session_jack_in(&S, (uint8_t)i));
+}
+char* engine_dungeon_room(void) {
+    return result(session_dungeon_room(&S));
+}
+char* engine_dungeon_next(void) {
+    return result(session_dungeon_next(&S));
+}
+char* engine_dungeon_leave(void) {
+    return result(session_dungeon_leave(&S));
 }

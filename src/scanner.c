@@ -13,6 +13,16 @@
 #define BT_PHASE_MS      12000
 #define RESEND_MS        4000
 #define PARTIAL_FLUSH_MS 400
+#define JOIN_LIST_MS     2000 /* time for "list -a" to print */
+#define JOIN_SCAN_MS     7000 /* a short scan when the network isn't listed */
+#define JOIN_TIMEOUT_MS  25000 /* Marauder gives up after about 10 s */
+
+typedef enum {
+    JoinBoot,
+    JoinList,
+    JoinScan,
+    JoinWait,
+} JoinStep;
 
 const uint32_t scanner_baud_rates[] = {115200, 230400, 460800, 921600, 57600, 38400, 9600};
 const size_t scanner_baud_count = sizeof(scanner_baud_rates) / sizeof(scanner_baud_rates[0]);
@@ -62,6 +72,16 @@ struct Scanner {
     uint32_t bytes_at_cmd;
     const char* error;
     bool bt_unsupported;
+
+    /* Jacking in */
+    bool joining;
+    ScanJoinState join_state;
+    uint8_t join_step; /* JoinStep */
+    uint32_t join_tick;
+    bool join_scanned;
+    int join_index;
+    char join_ssid[SCAN_NAME_LEN];
+    char join_password[64];
 
     ScanStats stats;
     char last_rx[SCAN_LOG_LEN * 2];
@@ -213,6 +233,8 @@ static bool scanner_open(Scanner* s, const ScanConfig* cfg, bool manual) {
     if(s->running) scanner_stop(s);
     s->cfg = *cfg;
     s->manual = manual;
+    s->joining = false;
+    s->join_state = ScanJoinIdle;
     s->error = NULL;
     s->line_len = 0;
     s->cmd_pending = false;
@@ -290,6 +312,107 @@ bool scanner_start(Scanner* s, const ScanConfig* cfg) {
 
 bool scanner_start_manual(Scanner* s, const ScanConfig* cfg) {
     return scanner_open(s, cfg, true);
+}
+
+bool scanner_join(Scanner* s, const ScanConfig* cfg, const char* ssid, const char* password) {
+    if(!scanner_open(s, cfg, true)) {
+        s->join_state = ScanJoinFailed;
+        return false;
+    }
+    s->joining = true;
+    s->join_state = ScanJoinFinding;
+    s->join_step = JoinBoot;
+    s->join_scanned = false;
+    s->join_index = -1;
+    snprintf(s->join_ssid, sizeof(s->join_ssid), "%s", ssid);
+    snprintf(s->join_password, sizeof(s->join_password), "%s", password ? password : "");
+    return true;
+}
+
+ScanJoinState scanner_join_state(Scanner* s) {
+    return s->join_state;
+}
+
+static void join_fail(Scanner* s, const char* why) {
+    s->join_state = ScanJoinFailed;
+    s->error = why;
+    scanner_log(s, '#', why, strlen(why));
+}
+
+static void join_list(Scanner* s) {
+    scanner_tx_raw(s, "stopscan");
+    furi_delay_ms(50);
+    s->join_index = -1;
+    scanner_tx_raw(s, "list -a");
+    s->join_step = JoinList;
+    s->join_tick = furi_get_tick();
+}
+
+/* Moves the join along: list, maybe scan and list again, then join. */
+static void scanner_update_join(Scanner* s) {
+    uint32_t now = furi_get_tick();
+    if(s->join_state != ScanJoinFinding && s->join_state != ScanJoinConnecting) return;
+    switch(s->join_step) {
+    case JoinBoot:
+        if((int32_t)(now - s->ready_tick) >= 0) join_list(s);
+        break;
+    case JoinList:
+        if(now - s->join_tick < furi_ms_to_ticks(JOIN_LIST_MS)) break;
+        if(s->join_index >= 0) {
+            /* Quote the password; Marauder also accepts '...' for one with a " in it. */
+            char cmd[96];
+            char q = strchr(s->join_password, '"') ? '\'' : '"';
+            snprintf(cmd, sizeof(cmd), "join -a %d -p %c%s%c", s->join_index, q, s->join_password, q);
+            s->stats.tx_cmds++;
+            if(s->serial) {
+                furi_hal_serial_tx(s->serial, (const uint8_t*)cmd, strlen(cmd));
+                const char* eol = s->cfg.eol ? "\r\n" : "\n";
+                furi_hal_serial_tx(s->serial, (const uint8_t*)eol, strlen(eol));
+                furi_hal_serial_tx_wait_complete(s->serial);
+            }
+            /* Don't log the password. */
+            scanner_log(s, '>', "join -a ... -p ***", 18);
+            scanner_file_write(s, "TX> ", "join (password hidden)", 22);
+            s->join_state = ScanJoinConnecting;
+            s->join_step = JoinWait;
+            s->join_tick = now;
+        } else if(!s->join_scanned) {
+            /* Not in the board's list yet: scan for access points briefly. */
+            scanner_tx_raw(s, "scanap");
+            s->join_scanned = true;
+            s->join_step = JoinScan;
+            s->join_tick = now;
+        } else {
+            join_fail(s, "Network not found");
+        }
+        break;
+    case JoinScan:
+        if(now - s->join_tick >= furi_ms_to_ticks(JOIN_SCAN_MS)) join_list(s);
+        break;
+    case JoinWait:
+        if(now - s->join_tick >= furi_ms_to_ticks(JOIN_TIMEOUT_MS)) join_fail(s, "No answer from board");
+        break;
+    }
+}
+
+/* Lines from the board while jacking in. */
+static void scanner_join_line(Scanner* s, const char* rec) {
+    if(s->join_step == JoinList) {
+        int index;
+        char essid[40];
+        if(s->join_index < 0 && scanner_parse_ap_list(rec, &index, essid, sizeof(essid)) &&
+           scanner_ssid_matches(essid, s->join_ssid))
+            s->join_index = index;
+    } else if(s->join_step == JoinWait) {
+        int r = scanner_parse_join(rec);
+        if(r > 0) {
+            s->join_state = ScanJoinConnected;
+            s->join_step = JoinBoot; /* done */
+            scanner_log(s, '#', "Connected!", 10);
+        } else if(r < 0) {
+            join_fail(s, "Couldn't connect: password?");
+        }
+    }
 }
 
 void scanner_stop(Scanner* s) {
@@ -395,6 +518,10 @@ static bool scanner_handle_record(Scanner* s, char* rec, size_t len, ScanEvent* 
         s->bt_unsupported = true;
         scanner_log(s, '#', "Board has no BT: skipping", 25);
     }
+    if(s->joining) {
+        scanner_join_line(s, rec);
+        return false;
+    }
     if(!scanner_parse_line(rec, s->phase, out)) return false;
     if(out->type == ScanEventAp)
         s->stats.aps++;
@@ -429,7 +556,10 @@ static bool scanner_split_bt(Scanner* s, ScanEvent* out) {
 
 bool scanner_poll(Scanner* s, ScanEvent* out) {
     if(!s->running) return false;
-    scanner_update_phase(s);
+    if(s->joining)
+        scanner_update_join(s);
+    else
+        scanner_update_phase(s);
 
 
     uint8_t byte;

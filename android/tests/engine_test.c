@@ -109,6 +109,12 @@ static char* chk(char* json) {
 #define engine_swap(a, b) chk(engine_swap(a, b))
 #define engine_set_bluetooth(a) chk(engine_set_bluetooth(a))
 #define engine_reset() chk(engine_reset())
+#define engine_dungeon_json() chk(engine_dungeon_json())
+#define engine_jack_in_check(a) chk(engine_jack_in_check(a))
+#define engine_jack_in(a) chk(engine_jack_in(a))
+#define engine_dungeon_room() chk(engine_dungeon_room())
+#define engine_dungeon_next() chk(engine_dungeon_next())
+#define engine_dungeon_leave() chk(engine_dungeon_leave())
 
 /* Calls an action and reports whether it succeeded. */
 static int ok(char* json) {
@@ -146,6 +152,128 @@ static void sighting(int type, int i) {
     e.rssi = (int8_t)(-50 - i % 40);
     snprintf(e.name, sizeof(e.name), "Net \"%d\"", i); /* quotes must be escaped in JSON */
     engine_push_sighting(&e);
+}
+
+/* Heals everyone in the team: revive, then a Max Tonic. */
+static void heal_team(void) {
+    for(uint8_t k = 0; k < 6; k++) {
+        free(engine_use_item(ItemRevive, k));
+        free(engine_use_item(ItemMaxTonic, k));
+    }
+}
+
+/* Fights the current battle to the end with the first move. */
+static void fight(void) {
+    for(int t = 0; t < 400; t++) {
+        char* b = engine_battle_json();
+        int over = strstr(b, "\"result\":\"ongoing\"") == NULL;
+        int must = strstr(b, "\"mustSwitch\":true") != NULL;
+        free(b);
+        if(over) return;
+        if(must) {
+            for(uint8_t k = 0; k < 6; k++)
+                if(ok(engine_battle_switch(k))) break;
+        } else {
+            free(engine_battle_move(0));
+        }
+    }
+}
+
+static void test_dungeon(void) {
+    char* list = engine_nearby_json();
+    CHECK(strstr(list, "\"index\":0") != NULL);
+    char mac_hex[18] = {0};
+    const char* m = strstr(list, "\"mac\":\"");
+    if(m) memcpy(mac_hex, m + 7, 17);
+    free(list);
+    uint8_t mac[6];
+    for(int i = 0; i < 6; i++)
+        mac[i] = (uint8_t)strtol(mac_hex + i * 3, NULL, 16);
+
+    /* Stock up first: crafting is closed inside a dungeon. More devices give
+     * enough shards for Max Tonics and Revive Crystals. */
+    engine_scan_set(true);
+    for(int i = 3000; i < 5000; i++) {
+        sighting(1, i);
+        if(i % 100 == 99) engine_tick();
+    }
+    engine_tick();
+    free(engine_take_events_json());
+    for(int i = 0; i < 30; i++) {
+        free(engine_craft(6)); /* Max Tonic */
+        free(engine_craft(7)); /* Revive Crystal */
+    }
+    heal_team();
+
+    /* You must be connected to that network to jack in. */
+    CHECK(ok(engine_jack_in_check(0)));
+    CHECK(!ok(engine_jack_in(0)));
+    uint8_t other[6] = {1, 2, 3, 4, 5, 6};
+    engine_link_up(other);
+    CHECK(!ok(engine_jack_in(0)));
+    engine_link_up(mac);
+    CHECK(ok(engine_jack_in(0)));
+    CHECK(contains(engine_state_json(), "\"inDungeon\":true"));
+    CHECK(contains(engine_state_json(), "\"wantsLink\":true"));
+    CHECK(contains(engine_dungeon_json(), "\"kind\":\"boss\""));
+
+    /* Only the team and bag: no collecting, catching, crafting, PAC or running. */
+    CHECK(!ok(engine_battle_begin(0)));
+    CHECK(!ok(engine_craft(0)));
+    CHECK(!ok(engine_pac_to_team(0)));
+    CHECK(!ok(engine_reset()));
+    CHECK(!ok(engine_dungeon_next())); /* the first room isn't cleared */
+
+    /* Play through to the boss, which is above the team's level: if it wins,
+     * heal up and try again (the dungeon starts over). */
+    long rooms = 0;
+    for(int attempt = 0; attempt < 4; attempt++) {
+        if(attempt > 0) {
+            heal_team();
+            engine_link_up(mac);
+            if(!ok(engine_jack_in(0))) break;
+        }
+        heal_team();
+        rooms = 0;
+        int guard = 0;
+        while(!contains(engine_dungeon_json(), "\"cleared\":true") && guard++ < 40) {
+            if(!contains(engine_dungeon_json(), "\"active\":true")) break;
+            if(contains(engine_dungeon_json(), "\"roomDone\":true")) {
+                CHECK(ok(engine_dungeon_next()));
+                continue;
+            }
+            if(!ok(engine_dungeon_room())) break;
+            rooms++;
+            if(contains(engine_state_json(), "\"inBattle\":true")) {
+                CHECK(contains(engine_battle_json(), "\"canCatch\":false"));
+                CHECK(!ok(engine_battle_ball(0)));
+                CHECK(!ok(engine_battle_run()));
+                fight();
+                free(engine_battle_close());
+                heal_team();
+            }
+        }
+        if(contains(engine_dungeon_json(), "\"cleared\":true")) break;
+    }
+    int cleared = contains(engine_dungeon_json(), "\"cleared\":true");
+    int still_in = contains(engine_state_json(), "\"inDungeon\":true");
+    printf("dungeon: %ld rooms played, %s\n", rooms, cleared ? "cleared" : still_in ? "stuck" : "ejected");
+    CHECK(cleared && rooms >= DUNGEON_ROOMS_MIN + 1);
+    CHECK(state("dungeonsCleared") == 1);
+    CHECK(contains(engine_battle_json(), "\"active\":false"));
+    CHECK(!ok(engine_dungeon_next())); /* nothing after the boss */
+    CHECK(ok(engine_dungeon_leave()));
+    CHECK(contains(engine_state_json(), "\"inDungeon\":false"));
+    CHECK(contains(engine_state_json(), "\"wantsLink\":false"));
+
+    /* A dropped connection throws you out. */
+    engine_link_up(mac);
+    heal_team();
+    CHECK(ok(engine_jack_in(0)));
+    engine_link_down();
+    CHECK(contains(engine_state_json(), "\"inDungeon\":false"));
+    CHECK(contains(engine_take_events_json(), "\"kind\":\"ejected\""));
+    CHECK(!ok(engine_jack_in(0))); /* not connected any more */
 }
 
 int main(void) {
@@ -265,6 +393,9 @@ int main(void) {
         CHECK(!ok(engine_battle_begin((uint32_t)strtol(p + 8, NULL, 10))));
     }
     free(list);
+
+    /* Dungeons */
+    test_dungeon();
 
     /* Team and PAC */
     long team = state("team");

@@ -41,6 +41,7 @@ char* engine_echoid_json(int where, uint32_t index); /* where: 0 team, 1 PAC, 2 
 char* engine_inventory_json(void); /* items, shards, recipes */
 char* engine_battle_json(void);
 char* engine_take_events_json(void); /* messages since the last call */
+char* engine_dungeon_json(void);
 
 /* ---- Actions (JSON {"ok":bool,"msg":"..."}, caller frees) ---- */
 char* engine_battle_begin(uint32_t nearby_index);
@@ -57,3 +58,12 @@ char* engine_pac_to_team(uint32_t pac_index);
 char* engine_swap(uint32_t pac_index, uint8_t team_index);
 char* engine_set_bluetooth(bool on);
 char* engine_reset(void);
+
+/* ---- Dungeons (see src/session.h) ---- */
+char* engine_jack_in_check(uint32_t nearby_index);
+void engine_link_up(const uint8_t mac[6]);
+void engine_link_down(void);
+char* engine_jack_in(uint32_t nearby_index);
+char* engine_dungeon_room(void);
+char* engine_dungeon_next(void);
+char* engine_dungeon_leave(void);

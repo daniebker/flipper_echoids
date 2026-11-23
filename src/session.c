@@ -160,6 +160,7 @@ bool session_init(Session* s, const uint8_t device_mac[6], const char* device_na
 
 bool session_reset(Session* s) {
     if(s->in_battle) FAIL(s, "Finish the battle first");
+    if(s->dungeon.active) FAIL(s, "Jack out first");
     new_game(s);
     s->nearby_count = 0;
     s->nearby_next_replace = 0;
@@ -279,6 +280,7 @@ void session_sighting(Session* s, const ScanEvent* ev) {
 }
 
 void session_scan_start(Session* s) {
+    if(s->dungeon.active) return; /* no collecting inside a dungeon */
     /* Catches since the last visit may have been seen here before. */
     for(uint8_t i = 0; i < s->nearby_count; i++)
         if(s->nearby[i].state == NearbyWild && session_owns(s, s->nearby[i].mac))
@@ -341,6 +343,7 @@ void session_nearby_echoid(Session* s, uint8_t index, Echoid* out) {
 }
 
 const char* session_catch_blocked(Session* s) {
+    if(s->battle_in_dungeon) return "Can't catch in a dungeon";
     if(session_owns(s, s->battle.wild.mac)) return "Already caught this one!";
     if(session_team_full(s) && !session_pac_has_room(s)) return "No room: craft a PAC!";
     return NULL;
@@ -412,6 +415,33 @@ static void build_results(Session* s) {
     }
 }
 
+/* Leaves the dungeon (rewards already given). */
+static void dungeon_end(Session* s) {
+    s->dungeon.active = false;
+    s->dirty = true;
+}
+
+/* Thrown out of the dungeon, with a reason for the player. */
+static void dungeon_eject(Session* s, const char* why) {
+    dungeon_end(s);
+    say(s, "%s", why);
+    event(s, SessionEventEjected, s->dungeon.mac, (Shard){0, 0}, why);
+}
+
+/* The boss is beaten: rewards, listed with the battle results. */
+static void dungeon_clear(Session* s) {
+    Dungeon* d = &s->dungeon;
+    Inventory* inv = &s->save.inv;
+    d->cleared = true;
+    if(s->save.dungeons_cleared < UINT16_MAX) s->save.dungeons_cleared++;
+    if(inv->shards[d->map.type][ShardPrismatic] < 9999) inv->shards[d->map.type][ShardPrismatic]++;
+    if(inv->items[ItemGreatBall] < 9997) inv->items[ItemGreatBall] += 2;
+    if(inv->items[ItemRevive] < 9999) inv->items[ItemRevive]++;
+    result_add(s, "Dungeon cleared! Found:");
+    result_add(s, "  1 Prismatic %s shard", echo_type_name(d->map.type));
+    result_add(s, "  2 Great Balls, 1 Revive");
+}
+
 /* After every battle action: forced switches, captures, wins and XP. */
 static void after_action(Session* s) {
     Battle* b = &s->battle;
@@ -452,6 +482,7 @@ static void after_action(Session* s) {
     case BattleWon:
         s->save.wins++;
         if(n) n->state = NearbyDone;
+        if(s->battle_in_dungeon) s->dungeon.room_done = true;
         break;
     case BattleFled:
         if(n) n->state = NearbyDone;
@@ -485,11 +516,15 @@ static void after_action(Session* s) {
         }
     }
     build_results(s);
+    if(s->battle_in_dungeon && b->result == BattleWon &&
+       s->dungeon.map.kind[s->dungeon.room] == RoomBoss)
+        dungeon_clear(s);
     s->dirty = true;
 }
 
 bool session_battle_begin(Session* s, uint8_t index) {
     if(s->in_battle) FAIL(s, "Already in a battle");
+    if(s->dungeon.active) FAIL(s, "Jack out first");
     if(index >= s->nearby_count) FAIL(s, "It's gone");
     Nearby* n = &s->nearby[index];
     /* Check ownership live (team and PAC), not just the list's mark. */
@@ -510,6 +545,7 @@ bool session_battle_begin(Session* s, uint8_t index) {
     /* Wild levels follow your lead, even if another echoid starts. */
     battle_start(&s->battle, first, n->mac, echo_wild_level(n->mac, session_lead(s)->level), n->ssid);
     s->battle_nearby = (int8_t)index;
+    s->battle_in_dungeon = false;
     s->in_battle = true;
     s->must_switch = false;
     s->result_count = 0;
@@ -563,6 +599,7 @@ bool session_battle_ball(Session* s, uint8_t ball) {
 
 bool session_battle_run(Session* s) {
     if(!can_act(s)) return false;
+    if(s->battle_in_dungeon) FAIL(s, "No running in a dungeon!");
     battle_flee(&s->battle);
     after_action(s);
     return true;
@@ -574,7 +611,162 @@ bool session_battle_close(Session* s) {
     s->in_battle = false;
     s->must_switch = false;
     s->battle_nearby = -1;
+    if(s->battle_in_dungeon) {
+        s->battle_in_dungeon = false;
+        if(s->battle.result == BattleLost)
+            dungeon_eject(s, "Team fainted: ejected!");
+        else if(s->dungeon.link_lost)
+            dungeon_eject(s, "Connection lost: ejected!");
+    }
     session_save(s);
+    return true;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Dungeons                                                                  */
+/* ------------------------------------------------------------------------- */
+
+bool session_in_dungeon(const Session* s) {
+    return s->dungeon.active;
+}
+
+static bool team_can_fight(const Session* s) {
+    for(uint8_t i = 0; i < s->save.team_count; i++)
+        if(s->save.team[i].hp > 0) return true;
+    return false;
+}
+
+bool session_jack_in_check(Session* s, uint8_t index) {
+    if(s->in_battle) FAIL(s, "Finish the battle first");
+    if(s->dungeon.active) FAIL(s, "Already jacked in");
+    if(index >= s->nearby_count) FAIL(s, "It's gone");
+    if(!team_can_fight(s)) FAIL(s, "All fainted: use Revives");
+    return true;
+}
+
+void session_link_up(Session* s, const uint8_t mac[6]) {
+    s->link_up = true;
+    memcpy(s->link_mac, mac, 6);
+}
+
+void session_link_down(Session* s) {
+    s->link_up = false;
+    if(!s->dungeon.active) return;
+    /* Out now, or as soon as the fight is over. */
+    if(s->in_battle && s->battle_in_dungeon)
+        s->dungeon.link_lost = true;
+    else
+        dungeon_eject(s, "Connection lost: ejected!");
+}
+
+bool session_wants_link(const Session* s) {
+    return s->dungeon.active;
+}
+
+bool session_jack_in(Session* s, uint8_t index) {
+    if(!session_jack_in_check(s, index)) return false;
+    const Nearby* n = &s->nearby[index];
+    /* You have to be connected to the network itself. */
+    if(!s->link_up || memcmp(s->link_mac, n->mac, 6) != 0) FAIL(s, "Connect to the network first");
+    Dungeon* d = &s->dungeon;
+    memset(d, 0, sizeof(*d));
+    memcpy(d->mac, n->mac, 6);
+    snprintf(d->ssid, sizeof(d->ssid), "%s", n->ssid);
+    dungeon_name(n->mac, d->name, sizeof(d->name));
+    dungeon_layout(n->mac, &d->map);
+    d->active = true;
+    if(s->scanning) session_scan_stop(s);
+    say(s, "Jacked in: %s", d->name);
+    return true;
+}
+
+uint8_t session_team_level(const Session* s) {
+    uint32_t sum = 0;
+    for(uint8_t i = 0; i < s->save.team_count; i++)
+        sum += s->save.team[i].level;
+    uint8_t n = s->save.team_count ? s->save.team_count : 1;
+    return (uint8_t)((sum + n - 1) / n);
+}
+
+bool session_dungeon_foe(Session* s, uint8_t room, Echoid* out) {
+    const Dungeon* d = &s->dungeon;
+    if(!d->active || room >= d->map.rooms) return false;
+    uint8_t kind = d->map.kind[room];
+    if(kind != RoomFight && kind != RoomBoss) return false;
+    echo_init(out, d->map.foe[room], dungeon_foe_level(session_team_level(s), kind == RoomBoss), d->ssid);
+    return true;
+}
+
+bool session_dungeon_room(Session* s) {
+    Dungeon* d = &s->dungeon;
+    if(!d->active) FAIL(s, "Not in a dungeon");
+    if(s->in_battle) FAIL(s, "Finish the battle first");
+    if(d->room_done) FAIL(s, d->cleared ? "Dungeon cleared!" : "Room cleared: go deeper");
+    switch(d->map.kind[d->room]) {
+    case RoomCache: {
+        uint8_t count, tier;
+        dungeon_cache(d->mac, d->room, &count, &tier);
+        uint16_t* have = &s->save.inv.shards[d->map.type][tier];
+        *have = *have + count > 9999 ? 9999 : (uint16_t)(*have + count);
+        d->room_done = true;
+        say(s, "Found %u %s %s shards", count, shard_tier_name(tier), echo_type_name(d->map.type));
+        session_save(s);
+        return true;
+    }
+    case RoomRest:
+        for(uint8_t i = 0; i < s->save.team_count; i++) {
+            Echoid* e = &s->save.team[i];
+            EchoStats st;
+            echo_stats(e, &st);
+            if(e->hp == 0) continue; /* fainted ones need a Revive Crystal */
+            uint32_t hp = e->hp + (uint32_t)st.max_hp * DUNGEON_REST_PCT / 100;
+            e->hp = hp > st.max_hp ? st.max_hp : (uint16_t)hp;
+        }
+        d->room_done = true;
+        say(s, "The team rests and recovers");
+        session_save(s);
+        return true;
+    default: {
+        /* A fight or the boss: the first healthy team member, lead first. */
+        Echoid* first = session_lead(s);
+        if(first->hp == 0) {
+            first = NULL;
+            for(uint8_t i = 0; i < s->save.team_count && !first; i++)
+                if(s->save.team[i].hp > 0) first = &s->save.team[i];
+        }
+        if(!first) FAIL(s, "All fainted: use Revives");
+        Echoid foe;
+        session_dungeon_foe(s, d->room, &foe);
+        battle_start(&s->battle, first, foe.mac, foe.level, d->ssid);
+        s->battle_nearby = -1;
+        s->battle_in_dungeon = true;
+        s->in_battle = true;
+        s->must_switch = false;
+        s->result_count = 0;
+        s->msg[0] = '\0';
+        return true;
+    }
+    }
+}
+
+bool session_dungeon_next(Session* s) {
+    Dungeon* d = &s->dungeon;
+    if(!d->active) FAIL(s, "Not in a dungeon");
+    if(!d->room_done) FAIL(s, "Clear this room first");
+    if(d->room + 1 >= d->map.rooms) FAIL(s, "Dungeon cleared!");
+    d->room++;
+    d->room_done = false;
+    s->msg[0] = '\0';
+    return true;
+}
+
+bool session_dungeon_leave(Session* s) {
+    if(!s->dungeon.active) FAIL(s, "Not in a dungeon");
+    if(s->in_battle) FAIL(s, "Finish the battle first");
+    bool cleared = s->dungeon.cleared;
+    dungeon_end(s);
+    session_save(s);
+    say(s, cleared ? "Jacked out. Well done!" : "Jacked out");
     return true;
 }
 
@@ -582,7 +774,14 @@ bool session_battle_close(Session* s) {
 /* Items, crafting, team and PAC                                             */
 /* ------------------------------------------------------------------------- */
 
+/* Things you can't do inside a dungeon: only the team and bag are there. */
+static bool not_in_dungeon(Session* s) {
+    if(s->dungeon.active) FAIL(s, "Not in a dungeon");
+    return true;
+}
+
 bool session_craft(Session* s, size_t recipe) {
+    if(!not_in_dungeon(s)) return false;
     if(recipe >= recipe_count) FAIL(s, "No such recipe");
     if(!craft_do(&s->save.inv, recipe)) FAIL(s, "Not enough shards");
     if(recipes[recipe].out == CRAFT_OUT_PAC) {
@@ -669,6 +868,7 @@ bool session_set_lead(Session* s, uint8_t team_index) {
 
 bool session_team_to_pac(Session* s, uint8_t team_index) {
     if(!not_in_battle(s)) return false;
+    if(!not_in_dungeon(s)) return false;
     if(team_index >= s->save.team_count) FAIL(s, "No such team member");
     if(s->save.team_count <= 1) FAIL(s, "Team needs one echoid");
     if(!session_pac_has_room(s)) FAIL(s, "PAC full: craft a PAC");
@@ -694,6 +894,7 @@ static void leave_pac(Echoid* e) {
 
 bool session_pac_to_team(Session* s, uint32_t pac_index) {
     if(!not_in_battle(s)) return false;
+    if(!not_in_dungeon(s)) return false;
     if(session_team_full(s)) FAIL(s, "Team full: pick a swap");
     Echoid e;
     if(pac_index >= s->save.pac_count || !pac_read(pac_index, &e)) FAIL(s, "Not found");
@@ -710,6 +911,7 @@ bool session_pac_to_team(Session* s, uint32_t pac_index) {
 
 bool session_swap(Session* s, uint32_t pac_index, uint8_t team_index) {
     if(!not_in_battle(s)) return false;
+    if(!not_in_dungeon(s)) return false;
     if(team_index >= s->save.team_count) FAIL(s, "No such team member");
     Echoid in;
     if(pac_index >= s->save.pac_count || !pac_read(pac_index, &in)) FAIL(s, "Not found");
