@@ -203,7 +203,7 @@ static void test_roster(void) {
     memset(all, 0, sizeof(all));
     for(int i = 0; i < 10; i++)
         all[i].mac[5] = (uint8_t)i;
-    uint8_t lead = 7, idx[MAX_TEAM];
+    uint8_t lead = 7, idx[MAX_OWNED];
 
     /* Old save: lead plus the first five others go in the team */
     roster_normalize(all, 10, &lead, true);
@@ -235,6 +235,25 @@ static void test_roster(void) {
     uint8_t l1 = 0;
     roster_normalize(one, 1, &l1, true);
     CHECK(!roster_to_pac(one, 1, &l1, 0));
+}
+
+static void test_pac_recipe(void) {
+    size_t pac = recipe_count;
+    for(size_t i = 0; i < recipe_count; i++)
+        if(recipes[i].out == CRAFT_OUT_PAC) pac = i;
+    CHECK(pac < recipe_count);
+    Inventory inv;
+    memset(&inv, 0, sizeof(inv));
+    inv.shards[EchoTypeVoid][ShardDull] = 3;
+    inv.shards[EchoTypeTide][ShardBright] = 1;
+    CHECK(!craft_can(&inv, pac));
+    inv.shards[EchoTypeGale][ShardBright] = 1;
+    Inventory before = inv;
+    CHECK(craft_do(&inv, pac));
+    CHECK(inventory_shard_total(&inv) == 0);
+    /* a PAC is not a bag item */
+    CHECK(memcmp(inv.items, before.items, sizeof(inv.items)) == 0);
+    CHECK(MAX_OWNED == PARTY_MAX + PAC_SIZE * PAC_MAX && MAX_OWNED < 256);
 }
 
 static void test_type_chart(void) {
@@ -313,6 +332,7 @@ int main(void) {
     test_shard_cooldown();
     test_format_duration();
     test_roster();
+    test_pac_recipe();
     if(failures) {
         printf("%d failure(s)\n", failures);
         return 1;

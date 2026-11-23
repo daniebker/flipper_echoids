@@ -375,6 +375,7 @@ const Recipe recipes[] = {
     {"Prism Ball", "1 Prismatic + 2 Bright", ItemPrismBall, {0, 2, 1}, -1, 0, -1, 0, 0},
     {"Tonic", "2 Tide + 1 Flora", ItemTonic, {0, 0, 0}, EchoTypeTide, 2, EchoTypeFlora, 1, 0},
     {"Echo Crystal", "5 shards of any kind", ItemCrystal, {0, 0, 0}, -1, 0, -1, 0, 5},
+    {"PAC (+10 room)", "3 Dull + 2 Bright shards", CRAFT_OUT_PAC, {3, 2, 0}, -1, 0, -1, 0, 0},
 };
 const size_t recipe_count = sizeof(recipes) / sizeof(recipes[0]);
 
@@ -508,7 +509,9 @@ bool craft_do(Inventory* inv, size_t recipe) {
     if(recipe >= recipe_count) return false;
     Inventory tmp = *inv;
     if(!craft_apply(&tmp, &recipes[recipe])) return false;
-    if(tmp.items[recipes[recipe].out] < 999) tmp.items[recipes[recipe].out]++;
+    /* A PAC adds storage, which the caller tracks; everything else is a bag item. */
+    uint8_t out = recipes[recipe].out;
+    if(out < ItemCount && tmp.items[out] < 999) tmp.items[out]++;
     *inv = tmp;
     return true;
 }

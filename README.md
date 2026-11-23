@@ -89,6 +89,7 @@ Shards come in 8 elements (the same as the creature types) and three tiers:
 | Prism Ball | 1 Prismatic + 2 Bright | Catch rate ×2.5 |
 | Tonic | 2 Tide + 1 Flora (any tier) | Fully heals the echoid you choose, including a fainted one |
 | Echo Crystal | 5 shards of any kind | Gives the echoid you choose half a level of XP |
+| PAC | 3 Dull + 2 Bright | Room for 10 more echoids in storage (up to 10 PACs) |
 
 ### Shard cooldowns
 
@@ -118,11 +119,16 @@ most of. Cheaper tiers are used first.
 - You carry up to **6** echoids in your team. Your lead is always one of them.
 - New catches join the team while it has room. After that they go to the **PAC**, and the
   battle log says `Team full: sent to PAC`.
-- You can own **40** echoids in total, team and PAC together. When both are full you can't
-  throw balls.
+- Storage comes in **PACs** of 10 echoids each, and you craft more in **Craft**
+  (3 Dull + 2 Bright shards). You start with one PAC, so you can own 6 + 10 = **16**
+  echoids. Each new PAC adds 10, up to 10 PACs (**106** echoids).
+- When the team and every PAC are full you can't throw balls, and the battle log says
+  `No room: craft a PAC!`. The PAC tab shows how full your storage is (for example
+  `12/20`).
 - Echoids in the PAC still regain HP over time.
 - Saves from before this change keep your lead and the next five echoids in the team. The
-  rest move to the PAC.
+  rest move to the PAC. Saves from before PACs could be crafted get 4 PACs (46 echoids), so
+  you keep at least the 40 you had room for.
 
 ### Catching and levelling
 

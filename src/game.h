@@ -13,8 +13,10 @@
 
 #define ECHO_TYPE_COUNT  8
 #define SHARD_TIER_COUNT 3
-#define MAX_TEAM         40 /* all owned echoids: team + PAC storage */
 #define PARTY_MAX        6 /* echoids carried in the team */
+#define PAC_SIZE         10 /* echoids stored per crafted PAC */
+#define PAC_MAX          10 /* most PACs a player can own */
+#define MAX_OWNED        (PARTY_MAX + PAC_SIZE * PAC_MAX) /* 106 */
 #define ECHO_FLAG_PARTY  0x01 /* Echoid.flags: in the team (else in the PAC) */
 #define MAX_LEVEL        50
 #define NAME_LEN         18
@@ -154,6 +156,9 @@ typedef struct {
     uint8_t elem_b_n;
     uint8_t any_n; /* shards of any element and tier */
 } Recipe;
+
+/* Recipe.out value for a PAC: it adds storage instead of a bag item. */
+#define CRAFT_OUT_PAC 0xFF
 
 extern const Recipe recipes[];
 extern const size_t recipe_count;
