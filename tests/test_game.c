@@ -153,6 +153,36 @@ static void test_type_chart(void) {
     CHECK(echo_type_mult(EchoTypeTide, EchoTypeStone) == 100);
 }
 
+static void test_marauder_current(void) {
+    ScanEvent ev;
+    /* scanall AP line from current Marauder (BSSID unlabeled, beacon bytes appended) */
+    CHECK(scanner_parse_line("-61 Ch: 6 a4:2b:b0:11:22:33 ESSID: CoffeeBar 31 04 ", ScanPhaseWifi, &ev));
+    CHECK(ev.type == ScanEventAp && ev.rssi == -61 && ev.mac[0] == 0xA4);
+    CHECK(strcmp(ev.name, "CoffeeBar") == 0);
+    CHECK(scanner_parse_line("-50 Ch: 1 a4:2b:b0:11:22:35 ESSID: My Cafe 24 11 04 ", ScanPhaseWifi, &ev));
+    CHECK(strcmp(ev.name, "My Cafe 24") == 0);
+    /* hidden network: Marauder prints the BSSID as the name */
+    CHECK(scanner_parse_line("-77 Ch: 11 a4:2b:b0:11:22:36 ESSID:  a4:2b:b0:11:22:36 11 04 ", ScanPhaseWifi, &ev));
+    CHECK(ev.mac[5] == 0x36 && strcmp(ev.name, "<hidden>") == 0);
+    /* station lines from scanall are not creatures */
+    CHECK(!scanner_parse_line("3: ap: a4:2b:b0:11:22:33 -> sta: 11:22:33:44:55:66", ScanPhaseWifi, &ev));
+    CHECK(!scanner_parse_line("#scanall", ScanPhaseWifi, &ev));
+    /* Bluetooth */
+    CHECK(scanner_parse_line("-71 Device: 5c:f3:70:aa:bb:cc", ScanPhaseBt, &ev));
+    CHECK(ev.type == ScanEventBt && ev.rssi == -71 && ev.mac[0] == 0x5C);
+    CHECK(scanner_parse_line("-64 Device: JBL Flip 5", ScanPhaseBt, &ev));
+    CHECK(ev.rssi == -64 && strcmp(ev.name, "JBL Flip 5") == 0);
+
+    /* run-together BT records (Marauder without a screen prints no newline) */
+    const char* joined = "-71 Device: Buds2-65 Device: ";
+    size_t cut = scanner_record_split(joined, strlen(joined));
+    CHECK(cut == strlen("-71 Device: Buds2"));
+    const char* joined2 = "-71 Device: 5c:f3:70:aa:bb:cc-5 Device: ";
+    CHECK(scanner_record_split(joined2, strlen(joined2)) == strlen("-71 Device: 5c:f3:70:aa:bb:cc"));
+    CHECK(scanner_record_split("-71 Device: ", 12) == 0);
+    CHECK(scanner_record_split("-71 Device: Foo", 15) == 0);
+}
+
 static void test_parser(void) {
     ScanEvent ev;
     uint8_t first_ap[6];
@@ -183,6 +213,7 @@ static void test_parser(void) {
 
 int main(void) {
     test_parser();
+    test_marauder_current();
     test_determinism();
     test_distribution();
     test_crafting();

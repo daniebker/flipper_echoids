@@ -29,10 +29,10 @@ static bool find_mac(const char* s, uint8_t mac[6]) {
     return false;
 }
 
-static void copy_name(char* dst, const char* src) {
+static void copy_name_n(char* dst, size_t size, const char* src) {
     while(*src == ' ') src++;
     size_t n = 0;
-    while(src[n] && src[n] != '\r' && src[n] != '\n' && n < SCAN_NAME_LEN - 1) {
+    while(src[n] && src[n] != '\r' && src[n] != '\n' && n < size - 1) {
         dst[n] = isprint((unsigned char)src[n]) ? src[n] : '?';
         n++;
     }
@@ -40,11 +40,22 @@ static void copy_name(char* dst, const char* src) {
     dst[n] = '\0';
 }
 
+static void copy_name(char* dst, const char* src) {
+    copy_name_n(dst, SCAN_NAME_LEN, src);
+}
+
 static int8_t parse_rssi(const char* line) {
     const char* p = strstr(line, "RSSI:");
     if(!p) p = strstr(line, "rssi:");
-    if(!p) return -80;
-    long v = strtol(p + 5, NULL, 10);
+    long v;
+    if(p) {
+        v = strtol(p + 5, NULL, 10);
+    } else if(line[0] == '-' && isdigit((unsigned char)line[1])) {
+        /* Current Marauder: "-61 Ch: 6 ..." / "-71 Device: ..." */
+        v = strtol(line, NULL, 10);
+    } else {
+        return -80;
+    }
     if(v > 0 || v < -127) return -80;
     return (int8_t)v;
 }
@@ -62,6 +73,26 @@ static void mac_from_name(const char* name, uint8_t mac[6]) {
     mac[3] = (uint8_t)(h1 >> 8);
     mac[4] = (uint8_t)h1;
     mac[5] = (uint8_t)h2;
+}
+
+static bool is_hex_byte_token(const char* p) {
+    return hexval(p[0]) >= 0 && hexval(p[1]) >= 0;
+}
+
+/* Marauder appends two beacon bytes in hex after the ESSID ("MyNet 31 04"). */
+static void strip_beacon_bytes(char* name) {
+    for(int k = 0; k < 2; k++) {
+        size_t n = strlen(name);
+        while(n > 0 && name[n - 1] == ' ')
+            name[--n] = '\0';
+        if(n >= 3 && name[n - 3] == ' ' && is_hex_byte_token(name + n - 2)) {
+            name[n - 3] = '\0';
+        } else if(n == 2 && is_hex_byte_token(name)) {
+            name[0] = '\0';
+        } else {
+            break;
+        }
+    }
 }
 
 bool scanner_parse_line(const char* line, ScanPhase phase, ScanEvent* out) {
@@ -84,12 +115,22 @@ bool scanner_parse_line(const char* line, ScanPhase phase, ScanEvent* out) {
     out->rssi = parse_rssi(line);
 
     if(phase == ScanPhaseWifi) {
-        /* Marauder scanap: "RSSI: -60 Ch: 6 BSSID: aa:bb:cc:dd:ee:ff ESSID: MyNet" */
+        /* Marauder scanall: "-61 Ch: 6 aa:bb:cc:dd:ee:ff ESSID: MyNet 31 04"
+         * Old scanap:       "RSSI: -60 Ch: 6 BSSID: aa:bb:cc:dd:ee:ff ESSID: MyNet"
+         * Station lines ("3: ap: .. -> sta: ..") have no ESSID and are ignored. */
         const char* e = strstr(line, "ESSID:");
-        if(e) copy_name(out->name, e + 6);
+        if(!e) return false;
+        char full[96];
+        copy_name_n(full, sizeof(full), e + 6);
+        strip_beacon_bytes(full);
+        copy_name(out->name, full);
+        /* Hidden networks print their BSSID as the name. */
+        uint8_t name_mac[6];
+        if(has_mac && find_mac(out->name, name_mac) && memcmp(name_mac, out->mac, 6) == 0)
+            out->name[0] = '\0';
         if(!has_mac) {
             /* Some Marauder builds omit the BSSID: fall back to a stable ID from the SSID. */
-            if(!e || !out->name[0]) return false;
+            if(!out->name[0]) return false;
             mac_from_name(out->name, out->mac);
         }
         out->type = ScanEventAp;
@@ -114,4 +155,23 @@ bool scanner_parse_line(const char* line, ScanPhase phase, ScanEvent* out) {
         return true;
     }
     return false;
+}
+
+size_t scanner_record_split(const char* buf, size_t len) {
+    static const char tag[] = "Device: ";
+    const size_t tag_len = sizeof(tag) - 1;
+    if(len <= tag_len || memcmp(buf + len - tag_len, tag, tag_len) != 0) return 0;
+
+    const char* first = strstr(buf, tag);
+    const char* second = buf + len - tag_len;
+    if(!first || first == second) return 0;
+
+    /* Walk back over " ", the RSSI digits and its '-' sign. */
+    size_t cut = (size_t)(second - buf);
+    while(cut > 0 && buf[cut - 1] == ' ')
+        cut--;
+    while(cut > 0 && buf[cut - 1] >= '0' && buf[cut - 1] <= '9')
+        cut--;
+    if(cut > 0 && buf[cut - 1] == '-') cut--;
+    return cut;
 }

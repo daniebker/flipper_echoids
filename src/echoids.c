@@ -725,10 +725,10 @@ enum {
 
 static const char* const term_cmds[] = {
     "help",
-    "scanap",
+    "scanall",
     "sniffbt",
     "stopscan",
-    "scanall",
+    "scanap",
     "list -a",
     "clearlist -a",
     "reboot",

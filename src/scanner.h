@@ -118,3 +118,6 @@ void scanner_power_off(void);
 
 /* Exposed for testing: parse one line of Marauder (or simple CSV) output. */
 bool scanner_parse_line(const char* line, ScanPhase phase, ScanEvent* out);
+/* If buf (NUL terminated, len chars) ends with the start of a second
+ * "<rssi> Device: " record, returns where the first record ends, else 0. */
+size_t scanner_record_split(const char* buf, size_t len);

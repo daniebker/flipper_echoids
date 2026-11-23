@@ -31,9 +31,20 @@ devices. Echoids gets both from an ESP32 board on the GPIO header that runs
 - The app turns on 5V on the GPIO header while scanning and turns it off again when
   you leave Collect mode.
 
-The app sends Marauder's `scanap` and `sniffbt` commands, switching between them
+The app sends Marauder's `scanall` and `sniffbt` commands, switching between them
 (20 s of WiFi, then 12 s of Bluetooth), with `stopscan` in between. It reads the
-MAC addresses from Marauder's output.
+MAC addresses from Marauder's output, which looks like this:
+
+```
+-61 Ch: 6 aa:bb:cc:dd:ee:ff ESSID: MyNetwork 31 04
+-71 Device: JBL Flip 5
+-68 Device: 5c:f3:70:aa:bb:cc
+```
+
+Current Marauder firmware no longer has a `scanap` command. If your board runs older
+Marauder firmware that still has it, choose it under **Board setup → WiFi cmd**. If the
+board answers `Bluetooth not supported`, the app stops trying Bluetooth scans until you
+leave Collect mode.
 
 If Marauder prints a Bluetooth device's name but not its MAC, the app makes a stable
 ID from the name, so that device still always drops the same shard.
@@ -105,7 +116,7 @@ the selected value. Changes are saved straight away.
 | 5V power | **Auto** turns 5V on while scanning and off afterwards. **Keep on** leaves it on. **Don't touch** never changes it (use this if the board has its own USB power) |
 | Boot wait | How long to wait after turning on 5V before sending commands (the ESP32 needs about 1–2 s to boot) |
 | Line end | `LF` or `CR+LF` after each command |
-| WiFi cmd / BT cmd | The Marauder commands used for scanning (`scanap` / `scanall`, `sniffbt`) |
+| WiFi cmd / BT cmd | The Marauder commands used for scanning: `scanall` (current Marauder) or `scanap` (older Marauder), and `sniffbt` |
 | Bluetooth scan | Turns the Bluetooth half of the scan cycle on or off |
 | **UART terminal** | A live view of the raw UART traffic, for debugging |
 | **Auto-calibrate** | Tries every pin and baud combination and saves the one the board answers on |
@@ -117,7 +128,7 @@ the selected value. Changes are saved straight away.
   (`ap`) and Bluetooth (`bt`) sightings the parser understood.
 - The log shows the last lines received. Lines starting with `>` were sent by the
   Flipper and lines starting with `#` are status messages.
-- **←/→** chooses a command (`help`, `scanap`, `sniffbt`, `stopscan`, `scanall`,
+- **←/→** chooses a command (`help`, `scanall`, `sniffbt`, `stopscan`, `scanap`,
   `list -a`, `clearlist -a`, `reboot`) and **OK** sends it.
 - **↑** switches the pins and **↓** steps through the baud rates. The UART reopens
   straight away and the change is saved.
@@ -129,7 +140,7 @@ the selected value. Changes are saved straight away.
 |---|---|
 | `rx0` after sending `help` | No connection. Board TX must go to Flipper RX (pin 14 for USART, 16 for LPUART), board RX to Flipper TX, and GND to GND. Also check the pins setting and that the board has power. |
 | `bad` keeps rising, log is full of `.` | Wrong baud rate. Press ↓ until the text is readable, or run Auto-calibrate. |
-| Readable text, but `ap0` during `scanap` | Marauder prints a format the parser doesn't recognise. Note what the lines look like (please open an issue with an example). |
+| Readable text, but `ap0` during `scanall` | Marauder prints a format the parser doesn't recognise. Note what the lines look like (please open an issue with an example). |
 | Works in the terminal, but nothing in Collect | Try **5V power → Keep on** or a longer **Boot wait**. The app now also re-sends the scan command if the board stays silent for 4 seconds. |
 
 Close any other app that uses the GPIO UART (for example the Marauder companion app or

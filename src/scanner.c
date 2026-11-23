@@ -19,7 +19,8 @@ const uint32_t scanner_baud_rates[] = {115200, 230400, 460800, 921600, 57600, 38
 const size_t scanner_baud_count = sizeof(scanner_baud_rates) / sizeof(scanner_baud_rates[0]);
 const uint16_t scanner_boot_waits_ms[] = {2000, 3000, 5000, 0, 500, 1000};
 const size_t scanner_boot_count = sizeof(scanner_boot_waits_ms) / sizeof(scanner_boot_waits_ms[0]);
-const char* const scanner_wifi_cmds[] = {"scanap", "scanall"};
+/* Current Marauder only has "scanall"; "scanap" is for older Marauder firmware. */
+const char* const scanner_wifi_cmds[] = {"scanall", "scanap"};
 const size_t scanner_wifi_cmd_count = sizeof(scanner_wifi_cmds) / sizeof(scanner_wifi_cmds[0]);
 const char* const scanner_bt_cmds[] = {"sniffbt"};
 const size_t scanner_bt_cmd_count = sizeof(scanner_bt_cmds) / sizeof(scanner_bt_cmds[0]);
@@ -63,6 +64,7 @@ struct Scanner {
     uint32_t bytes_at_cmd;
     uint32_t last_demo;
     const char* error;
+    bool bt_unsupported;
 
     ScanStats stats;
     char log[SCAN_LOG_LINES][SCAN_LOG_LEN];
@@ -179,6 +181,7 @@ static bool scanner_open(Scanner* s, ScanSource source, const ScanConfig* cfg, b
     s->phase = ScanPhaseIdle;
     s->last_demo = furi_get_tick();
     s->ready_tick = furi_get_tick();
+    s->bt_unsupported = false;
     memset(&s->stats, 0, sizeof(s->stats));
     furi_stream_buffer_reset(s->rx);
 
@@ -314,11 +317,13 @@ static void scanner_update_phase(Scanner* s) {
 
     uint32_t elapsed = now - s->phase_started;
     if(s->phase == ScanPhaseWifi && elapsed > furi_ms_to_ticks(WIFI_PHASE_MS)) {
-        if(s->cfg.bt_enabled)
+        if(s->cfg.bt_enabled && !s->bt_unsupported)
             scanner_enter_phase(s, ScanPhaseBt);
         else
             s->phase_started = now;
-    } else if(s->phase == ScanPhaseBt && elapsed > furi_ms_to_ticks(BT_PHASE_MS)) {
+    } else if(
+        s->phase == ScanPhaseBt &&
+        (elapsed > furi_ms_to_ticks(BT_PHASE_MS) || s->bt_unsupported)) {
         scanner_enter_phase(s, ScanPhaseWifi);
     }
 }
@@ -359,18 +364,44 @@ static bool scanner_demo(Scanner* s, ScanEvent* out) {
     return true;
 }
 
-static bool scanner_finish_line(Scanner* s, ScanEvent* out) {
-    s->line[s->line_len] = '\0';
-    size_t len = s->line_len;
-    s->line_len = 0;
+static bool scanner_handle_record(Scanner* s, char* rec, size_t len, ScanEvent* out) {
+    rec[len] = '\0';
     s->stats.lines++;
-    scanner_log(s, ' ', s->line, len);
-    if(!scanner_parse_line(s->line, s->phase, out)) return false;
+    scanner_log(s, ' ', rec, len);
+    if(strstr(rec, "Bluetooth not supported")) {
+        s->bt_unsupported = true;
+        scanner_log(s, '#', "Board has no BT: skipping", 25);
+    }
+    if(!scanner_parse_line(rec, s->phase, out)) return false;
     if(out->type == ScanEventAp)
         s->stats.aps++;
     else
         s->stats.bts++;
     return true;
+}
+
+static bool scanner_finish_line(Scanner* s, ScanEvent* out) {
+    size_t len = s->line_len;
+    s->line_len = 0;
+    return scanner_handle_record(s, s->line, len, out);
+}
+
+/* Marauder builds without a screen print Bluetooth sightings as
+ * "-71 Device: name" with no newline, so records run together:
+ * "-71 Device: Foo-65 Device: Bar". When a second "Device: " arrives,
+ * cut the buffer just before that record's RSSI. */
+static bool scanner_split_bt(Scanner* s, ScanEvent* out) {
+    size_t len = s->line_len;
+    s->line[len] = '\0';
+    size_t cut = scanner_record_split(s->line, len);
+    if(cut == 0) return false;
+
+    char rec[LINE_MAX];
+    memcpy(rec, s->line, cut);
+    size_t rest = len - cut;
+    memmove(s->line, s->line + cut, rest);
+    s->line_len = rest;
+    return scanner_handle_record(s, rec, cut, out);
 }
 
 bool scanner_poll(Scanner* s, ScanEvent* out) {
@@ -393,6 +424,7 @@ bool scanner_poll(Scanner* s, ScanEvent* out) {
         else
             s->stats.rx_garbage++;
         s->line[s->line_len++] = (char)byte;
+        if(byte == ' ' && scanner_split_bt(s, out)) return true;
         if(s->line_len >= LINE_MAX - 1) {
             if(scanner_finish_line(s, out)) return true;
         }
