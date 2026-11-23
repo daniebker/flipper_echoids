@@ -309,6 +309,27 @@ static void test_moves(void) {
     uint16_t a_hp = a.hp;
     battle_switch(&b, &a, false); /* free switch: no attack on a */
     CHECK(b.mine == &a && a.hp == a_hp);
+    CHECK(b.fought_n == 2); /* a and c, each counted once */
+
+    /* XP is shared evenly by everyone who fought */
+    echo_init(&a, mac, 5, "a");
+    echo_init(&c, mac2, 5, "c");
+    battle_start(&b, &a, wild, 1, "w");
+    battle_switch(&b, &c, false);
+    b.wild.hp = 1;
+    for(int t = 0; t < 50 && b.result == BattleOngoing; t++) {
+        b.wild.hp = 1;
+        battle_attack(&b, 0);
+        if(b.result == BattleLost) break;
+    }
+    if(b.result == BattleWon) {
+        CHECK(b.fought_xp[0] == b.fought_xp[1]);
+        CHECK(b.fought_xp[0] == b.xp_gained / 2);
+        CHECK(a.xp > 0 || a.level > 5);
+        CHECK(c.xp > 0 || c.level > 5);
+    } else {
+        CHECK(0 && "test battle should be won");
+    }
 }
 
 static void test_type_chart(void) {

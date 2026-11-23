@@ -219,9 +219,15 @@ typedef struct {
     Echoid* mine;
     Echoid wild;
     uint8_t result;
-    uint8_t level_before; /* player's level before XP was awarded */
-    uint8_t levels_gained;
-    uint32_t xp_gained;
+    uint8_t level_before; /* active echoid's level before XP was awarded */
+    uint8_t levels_gained; /* ... and how many it gained */
+    uint32_t xp_gained; /* total XP won; shared evenly by everyone who fought */
+
+    /* Every echoid that fought in this battle (fainted ones included). */
+    Echoid* fought[PARTY_MAX];
+    uint8_t fought_n;
+    uint32_t fought_xp[PARTY_MAX];
+    uint8_t fought_level_before[PARTY_MAX];
     char log[BATTLE_LOG_LINES][BATTLE_LOG_LEN];
 } Battle;
 

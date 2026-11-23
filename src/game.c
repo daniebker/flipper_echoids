@@ -633,11 +633,19 @@ static void battle_log(Battle* b, const char* msg) {
 void battle_start(Battle* b, Echoid* mine, const uint8_t mac[6], uint8_t level, const char* ssid) {
     memset(b, 0, sizeof(*b));
     b->mine = mine;
+    b->fought[0] = mine;
+    b->fought_n = 1;
     echo_init(&b->wild, mac, level, ssid);
     b->result = BattleOngoing;
     char msg[BATTLE_LOG_LEN];
     snprintf(msg, sizeof(msg), "A wild %s appears!", echo_species_name(mac));
     battle_log(b, msg);
+}
+
+static void note_fought(Battle* b, Echoid* e) {
+    for(uint8_t i = 0; i < b->fought_n; i++)
+        if(b->fought[i] == e) return;
+    if(b->fought_n < PARTY_MAX) b->fought[b->fought_n++] = e;
 }
 
 /* Performs one attack with a move. Returns true if the defender fainted. */
@@ -678,8 +686,18 @@ static void award_xp(Battle* b, bool captured) {
     xp = xp * (100u + 25u * g.rarity) / 100u;
     if(captured) xp = xp * 3u / 2u;
     b->xp_gained = xp;
+    /* Everyone who fought shares the XP equally. */
+    uint32_t share = b->fought_n ? xp / b->fought_n : xp;
+    if(share < 1) share = 1;
     b->level_before = b->mine->level;
-    b->levels_gained = echo_add_xp(b->mine, xp);
+    b->levels_gained = 0;
+    for(uint8_t i = 0; i < b->fought_n; i++) {
+        Echoid* e = b->fought[i];
+        b->fought_level_before[i] = e->level;
+        b->fought_xp[i] = share;
+        uint8_t gained = echo_add_xp(e, share);
+        if(e == b->mine) b->levels_gained = gained;
+    }
 }
 
 /* Wild echoids mostly pick their best move against you, sometimes any move. */
@@ -723,6 +741,7 @@ static void player_attack(Battle* b, const Move* mv) {
 void battle_switch(Battle* b, Echoid* next, bool costs_turn) {
     if(b->result != BattleOngoing || !next || next == b->mine) return;
     b->mine = next;
+    note_fought(b, next);
     char msg[BATTLE_LOG_LEN];
     snprintf(msg, sizeof(msg), "Go, %s!", echo_species_name(next->mac));
     battle_log(b, msg);

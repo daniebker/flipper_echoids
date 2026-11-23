@@ -30,6 +30,8 @@
 #define CRAFT_ROWS       3
 #define SPOTTED_MAX      128
 #define RECHARGE_NOTED_MAX 48
+#define RESULT_LINES_MAX   24
+#define RESULT_ROWS        5
 
 typedef enum {
     ScreenIntro,
@@ -50,6 +52,7 @@ typedef enum {
     ScreenSwap, /* pick a team member to swap out for a PAC echoid */
     ScreenMovePick, /* battle: choose one of the active echoid's moves */
     ScreenBattleSwap, /* battle: choose a team member to send in */
+    ScreenBattleResult, /* after a battle: XP, level-ups and new moves per echoid */
 } Screen;
 
 typedef enum {
@@ -97,6 +100,11 @@ typedef struct {
     uint8_t bswap_idx;
     uint8_t bswap_scroll;
     bool bswap_forced; /* the active echoid fainted: must pick a replacement */
+
+    /* Battle results lines */
+    char result_lines[RESULT_LINES_MAX][32];
+    uint8_t result_count;
+    uint8_t result_scroll;
     bool detail_moves; /* detail screen shows the Moves page */
     uint8_t ball_idx;
 
@@ -642,6 +650,20 @@ static void draw_move_pick(App* app, Canvas* canvas) {
     }
 }
 
+static void draw_battle_result(App* app, Canvas* canvas) {
+    char right[24];
+    snprintf(right, sizeof(right), "+%lu XP", (unsigned long)app->battle.xp_gained);
+    draw_title(canvas, "Results", right);
+    for(uint8_t row = 0; row < RESULT_ROWS; row++) {
+        uint8_t i = app->result_scroll + row;
+        if(i >= app->result_count) break;
+        canvas_draw_str(canvas, 2, 22 + row * 10, app->result_lines[i]);
+    }
+    if(app->result_count > RESULT_ROWS)
+        elements_scrollbar_pos(
+            canvas, 127, 14, 48, app->result_scroll, app->result_count - RESULT_ROWS + 1);
+}
+
 static void draw_ball_pick(App* app, Canvas* canvas) {
     draw_battle(app, canvas);
     canvas_set_color(canvas, ColorWhite);
@@ -1011,7 +1033,9 @@ static const char* const help_lines[] = {
     "as many as you like. The",
     "PAC heals echoids.",
     "",
-    "Win or catch to gain XP.",
+    "Win or catch to gain XP;",
+    "everyone who fought shares",
+    "it evenly.",
     "HP regenerates slowly, or",
     "use a Tonic from the Bag.",
     "* owned  x already fought",
@@ -1070,6 +1094,9 @@ static void draw_callback(Canvas* canvas, void* ctx) {
         break;
     case ScreenBattleSwap:
         draw_battle_swap(app, canvas);
+        break;
+    case ScreenBattleResult:
+        draw_battle_result(app, canvas);
         break;
     case ScreenTeam:
         draw_team(app, canvas);
@@ -1721,6 +1748,49 @@ static void battle_log_line(Battle* b, const char* msg) {
     b->log[1][BATTLE_LOG_LEN - 1] = '\0';
 }
 
+static void result_add(App* app, const char* line) {
+    if(app->result_count >= RESULT_LINES_MAX) return;
+    strncpy(app->result_lines[app->result_count], line, sizeof(app->result_lines[0]) - 1);
+    app->result_lines[app->result_count][sizeof(app->result_lines[0]) - 1] = '\0';
+    app->result_count++;
+}
+
+/* Lists what every echoid that fought got out of the battle. */
+static void battle_results_build(App* app) {
+    Battle* b = &app->battle;
+    char line[40];
+    app->result_count = 0;
+    app->result_scroll = 0;
+    for(uint8_t i = 0; i < b->fought_n; i++) {
+        Echoid* e = b->fought[i];
+        uint8_t before = b->fought_level_before[i];
+        if(e->level > before)
+            snprintf(
+                line,
+                sizeof(line),
+                "%s +%lu Lv%u>%u",
+                echo_species_name(e->mac),
+                (unsigned long)b->fought_xp[i],
+                before,
+                e->level);
+        else
+            snprintf(
+                line,
+                sizeof(line),
+                "%s +%lu XP",
+                echo_species_name(e->mac),
+                (unsigned long)b->fought_xp[i]);
+        result_add(app, line);
+        for(uint16_t lv = (uint16_t)before + 1; lv <= e->level; lv++) {
+            const Move* m = echo_move_learned_at(e->mac, (uint8_t)lv);
+            if(m) {
+                snprintf(line, sizeof(line), "  learned %s", m->name);
+                result_add(app, line);
+            }
+        }
+    }
+}
+
 /* Opens the switch picker; forced when the active echoid has fainted. */
 static void battle_swap_open(App* app, bool forced) {
     bool any = false;
@@ -1798,25 +1868,34 @@ static void battle_after_action(App* app) {
         break;
     }
     if(b->xp_gained) {
-        if(b->levels_gained) {
+        if(b->fought_n > 1)
             snprintf(
                 msg,
                 sizeof(msg),
-                "+%lu XP  Level up! Lv%u",
+                "+%lu XP shared by %u",
                 (unsigned long)b->xp_gained,
-                b->mine->level);
-        } else {
+                b->fought_n);
+        else
             snprintf(msg, sizeof(msg), "+%lu XP", (unsigned long)b->xp_gained);
-        }
         battle_log_line(b, msg);
-        /* Announce moves learned on the way up (the newest shows last). */
-        for(uint16_t lv = (uint16_t)b->level_before + 1; lv <= b->mine->level; lv++) {
-            const Move* m = echo_move_learned_at(b->mine->mac, (uint8_t)lv);
-            if(m) {
-                snprintf(msg, sizeof(msg), "Learned %s!", m->name);
-                battle_log_line(b, msg);
-                notification_message(app->notif, &sequence_success);
+        /* A one-line summary; the results screen has the details. */
+        uint8_t levelled = 0;
+        const Move* learned = NULL;
+        for(uint8_t i = 0; i < b->fought_n; i++) {
+            Echoid* e = b->fought[i];
+            if(e->level > b->fought_level_before[i]) levelled++;
+            for(uint16_t lv = (uint16_t)b->fought_level_before[i] + 1; lv <= e->level; lv++) {
+                const Move* m = echo_move_learned_at(e->mac, (uint8_t)lv);
+                if(m) learned = m;
             }
+        }
+        if(learned) {
+            snprintf(msg, sizeof(msg), "Learned %s!", learned->name);
+            battle_log_line(b, msg);
+            notification_message(app->notif, &sequence_success);
+        } else if(levelled) {
+            snprintf(msg, sizeof(msg), "%u level up%s!", levelled, levelled > 1 ? "s" : "");
+            battle_log_line(b, msg);
         }
     }
     app->dirty = true;
@@ -2077,7 +2156,12 @@ static void handle_input(App* app, InputEvent* ev) {
     case ScreenBattle:
         if(app->battle.result != BattleOngoing) {
             if(press && (ev->key == InputKeyOk || ev->key == InputKeyBack)) {
-                app->screen = ScreenCollect;
+                if(app->battle.xp_gained) {
+                    battle_results_build(app);
+                    app->screen = ScreenBattleResult;
+                } else {
+                    app->screen = ScreenCollect;
+                }
                 if(app->dirty) app_save(app);
             }
             break;
@@ -2107,6 +2191,18 @@ static void handle_input(App* app, InputEvent* ev) {
                 break;
             }
             battle_after_action(app);
+        }
+        break;
+
+    case ScreenBattleResult:
+        if(dy) {
+            int n = (int)app->result_scroll + dy;
+            int max = app->result_count > RESULT_ROWS ? app->result_count - RESULT_ROWS : 0;
+            if(n < 0) n = 0;
+            if(n > max) n = max;
+            app->result_scroll = (uint8_t)n;
+        } else if(press && (ev->key == InputKeyOk || ev->key == InputKeyBack)) {
+            app->screen = ScreenCollect;
         }
         break;
 

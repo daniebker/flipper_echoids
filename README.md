@@ -66,7 +66,7 @@ from a fixed pool of fake devices, so you can play and test without hardware.
 | Screen | Controls |
 |---|---|
 | **Collect** | Starts scanning. The top right shows how many echoids you've spotted (ball icon) and how many shards you've collected (diamond icon) since opening the app. Nearby access points are listed as echoids, showing species, level, type and signal strength. The panel at the bottom shows the selected echoid's rarity, type and stats (HP, ATK, DEF, SPD) at the level it would battle at. `*` = already caught (in your team or PAC), `x` = already fought this session. **OK** battles the selected echoid. **Back** stops scanning. Bluetooth shards are collected automatically and shown in a popup. |
-| **Battle** | **←/→** choose **Hit**, **Swap**, **Ball** or **Run**, and **OK** confirms. **Hit** opens the fighting echoid's moves (up to 4): **↑/↓** picks one and **OK** uses it. Each row shows the move's name, `x2` / `x.5` if the type matchup helps or hurts against this wild echoid, the move's type and its power. **Swap** sends in another team member (`>` marks the one fighting). Switching uses your turn, so the wild echoid gets an attack on the newcomer. If your echoid faints and anyone on your team can still fight, you pick who goes next instead of losing; the battle is only lost when the whole team has fainted. A battle starts with your lead, or with the first healthy team member if the lead has fainted. XP goes to whichever echoid finishes the battle. **Ball** opens the throw menu, which shows each ball's catch chance. **Run** tries to escape. |
+| **Battle** | **←/→** choose **Hit**, **Swap**, **Ball** or **Run**, and **OK** confirms. **Hit** opens the fighting echoid's moves (up to 4): **↑/↓** picks one and **OK** uses it. Each row shows the move's name, `x2` / `x.5` if the type matchup helps or hurts against this wild echoid, the move's type and its power. **Swap** sends in another team member (`>` marks the one fighting). Switching uses your turn, so the wild echoid gets an attack on the newcomer. If your echoid faints and anyone on your team can still fight, you pick who goes next instead of losing; the battle is only lost when the whole team has fainted. A battle starts with your lead, or with the first healthy team member if the lead has fainted. XP is shared: see [Catching and levelling](#catching-and-levelling). **Ball** opens the throw menu, which shows each ball's catch chance. **Run** tries to escape. |
 | **Team** | Two tabs, switched with **←/→**: **Team** (up to 6 echoids you carry) and **PAC** (Cold PAC Storage for the rest). **OK** opens an echoid's details, where **←/→** browses and **OK** opens its actions. For a team member: **Set as lead** (the echoid that fights) or **Send to PAC**. For a PAC echoid: **Move to team**. If the team is full, you pick which team member to swap out. The team always keeps at least one echoid. |
 | **PAC** | Opens **Cold PAC Storage** straight away: browse every echoid you've stored with **↑/↓**, and press **OK** for its details and **Move to team**. The main menu shows how many echoids are stored. It's the same screen as Team's PAC tab, so **←/→** switches to the team. |
 | **Craft** | `+` marks recipes you can afford. **OK** crafts one. |
@@ -173,7 +173,12 @@ usually pick the one that hurts your echoid most.
   how low the wild echoid's HP is.
 - Wild echoids keep the species, type and stats their MAC gives them. Their **level** is
   set near your lead's level, from 2 below to 2 above, so encounters stay fair.
-- Winning or catching gives your lead XP. Catching gives 1.5× the XP of a win.
+- Winning or catching earns XP, and catching gives 1.5× the XP of a win. The XP is
+  **shared evenly by every echoid that fought** in the battle: the one that started, and
+  every echoid you switched in, including any that fainted. Each gets at least 1 XP.
+- After a battle that earned XP, pressing **OK** opens a **Results** screen. It lists each
+  echoid that fought with its share of XP, any level-ups (for example `Lv12>13`) and any
+  moves it learned. **↑/↓** scrolls, and **OK** goes back to Collect.
 - HP comes back at 1 point every 5 seconds outside battle. A Tonic fully heals whichever echoid you choose.
 
 Progress is saved to `/ext/apps_data/echoids/save.bin`.
