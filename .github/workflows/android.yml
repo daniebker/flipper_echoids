@@ -16,7 +16,7 @@ jobs:
           T=android/tests/flipper_ui
           gcc -std=gnu11 -O1 -g -fsanitize=address,undefined -Wall -Wextra -Wno-unused-parameter \
             -Wno-format-truncation -I$C/shim -I$T -Isrc \
-            src/game.c src/echoids.c src/save.c src/pac_store.c src/scanner_parse.c \
+            src/game.c src/session.c src/echoids.c src/save.c src/pac_store.c src/scanner_parse.c \
             $T/scanner_phone.c $C/shim/shim_core.c $T/shim_gui.c $T/smoke.c \
             -lpthread -o smoke
           ./smoke
@@ -26,7 +26,7 @@ jobs:
           gcc -std=gnu11 -O1 -g -fsanitize=address,undefined -Wall -Wextra -Wno-unused-parameter \
             -I$C/shim -I$C/engine -I$C -Isrc \
             $C/engine/engine.c $C/engine/json.c $C/shim/shim_core.c \
-            src/game.c src/save.c src/pac_store.c android/tests/engine_test.c \
+            src/game.c src/session.c src/save.c src/pac_store.c android/tests/engine_test.c \
             -lpthread -o engine_test
           ./engine_test
 

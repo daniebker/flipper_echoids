@@ -181,6 +181,14 @@ const char* move_type_short(const Move* m);
 #define SPECIES_PER_TYPE  3
 /* False for opposed elements: the type an echoid beats and the type that beats it. */
 bool move_type_learnable(uint8_t echo_type, uint8_t move_type);
+/* The two move types an echoid of this type can never learn. */
+void echo_unlearnable_types(uint8_t echo_type, uint8_t out[2]);
+/* A move's damage multiplier in percent against a defender of this type
+ * (100 for untyped moves). */
+uint8_t move_mult(const Move* m, uint8_t defender_type);
+/* Each move learned on the way from level `from` (exclusive) to `to`
+ * (inclusive), in order; returns the count (up to max). */
+uint8_t echo_moves_learned(const uint8_t mac[6], uint8_t from, uint8_t to, const Move** out, uint8_t max);
 /* Tables, for docs and tools. */
 const Move* move_get(uint8_t type, uint8_t idx);
 uint8_t learnset_len(void);

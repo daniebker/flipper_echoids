@@ -149,6 +149,12 @@ bool move_type_learnable(uint8_t echo_type, uint8_t move_type) {
     return true;
 }
 
+void echo_unlearnable_types(uint8_t echo_type, uint8_t out[2]) {
+    echo_type %= ECHO_TYPE_COUNT;
+    out[0] = (uint8_t)((echo_type + 1) % ECHO_TYPE_COUNT); /* the type it beats */
+    out[1] = (uint8_t)((echo_type + ECHO_TYPE_COUNT - 1) % ECHO_TYPE_COUNT); /* the type that beats it */
+}
+
 static const Move* learn_step_move(const EchoGenes* g, const LearnStep* st) {
     uint8_t t = g->type;
     if(st->from == LearnCounter) t = counter_type(g->type);
@@ -695,6 +701,19 @@ uint32_t battle_xp_reward(uint8_t wild_level, uint8_t rarity, bool captured) {
     xp = xp * (100u + 25u * rarity) / 100u;
     if(captured) xp = xp * 3u / 2u;
     return xp;
+}
+
+uint8_t move_mult(const Move* m, uint8_t defender_type) {
+    return m->type >= ECHO_TYPE_COUNT ? 100 : echo_type_mult(m->type, defender_type);
+}
+
+uint8_t echo_moves_learned(const uint8_t mac[6], uint8_t from, uint8_t to, const Move** out, uint8_t max) {
+    uint8_t n = 0;
+    for(uint16_t lv = (uint16_t)from + 1; lv <= to && n < max; lv++) {
+        const Move* m = echo_move_learned_at(mac, (uint8_t)lv);
+        if(m) out[n++] = m;
+    }
+    return n;
 }
 
 uint8_t echo_capture_chance(const Echoid* wild, uint8_t ball) {

@@ -574,7 +574,33 @@ static void test_parser(void) {
     CHECK(ev.type == ScanEventAp && ev.mac[5] == 0x67);
 }
 
+/* Rules the UIs used to compute themselves, now only in game.c. */
+static void test_shared_rules(void) {
+    for(uint8_t t = 0; t < ECHO_TYPE_COUNT; t++) {
+        uint8_t cant[2];
+        echo_unlearnable_types(t, cant);
+        for(uint8_t m = 0; m < ECHO_TYPE_COUNT; m++)
+            CHECK(move_type_learnable(t, m) == (m != cant[0] && m != cant[1]));
+        Move neutral = {"Tackle", MOVE_NEUTRAL, 40, 100};
+        CHECK(move_mult(&neutral, t) == 100);
+        Move typed = {"Splash", t, 40, 100};
+        CHECK(move_mult(&typed, (uint8_t)((t + 1) % ECHO_TYPE_COUNT)) == echo_type_mult(t, (uint8_t)((t + 1) % ECHO_TYPE_COUNT)));
+    }
+    /* Moves learned over a range of levels match learning them one at a time. */
+    uint8_t mac[6] = {0x10, 0x20, 0x30, 0x40, 0x50, 0x60};
+    const Move* got[MAX_LEVEL];
+    uint8_t n = echo_moves_learned(mac, 1, MAX_LEVEL, got, MAX_LEVEL);
+    uint8_t k = 0;
+    for(uint16_t lv = 2; lv <= MAX_LEVEL; lv++) {
+        const Move* m = echo_move_learned_at(mac, (uint8_t)lv);
+        if(m) CHECK(k < n && got[k++] == m);
+    }
+    CHECK(k == n && n > 0);
+    CHECK(echo_moves_learned(mac, 1, MAX_LEVEL, got, 2) == 2);
+}
+
 int main(void) {
+    test_shared_rules();
     test_parser();
     test_marauder_current();
     test_determinism();

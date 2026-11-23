@@ -210,7 +210,7 @@ final class DetailScreen extends Screen {
 
     private void moveToTeam() {
         JSONObject st = Ui.obj(Engine.state());
-        if(st.optInt("team") < st.optInt("teamMax")) {
+        if(!st.optBoolean("teamFull")) {
             if(app.act(Engine.pacToTeam(index))) app.pop();
             return;
         }

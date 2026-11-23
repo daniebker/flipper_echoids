@@ -14,6 +14,7 @@ add_library(echoids SHARED
     engine/json.c
     shim/shim_core.c
     ${GAME_SRC}/game.c
+    ${GAME_SRC}/session.c
     ${GAME_SRC}/save.c
     ${GAME_SRC}/pac_store.c
 )

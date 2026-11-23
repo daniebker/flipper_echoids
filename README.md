@@ -22,7 +22,8 @@ nearby WiFi access points and craft gear from shards that Bluetooth devices drop
 
 Echoids also runs on **Android phones**, with all the same features. The app is a proper
 Android app with touch controls, but the game rules come from the same C code as the Flipper
-app. Battles, moves, catching, crafting, the PAC, time of day, star ratings and names all
+app (`src/session.c` and `src/game.c`): both apps only draw the game and pass on what you tap
+or press. Battles, moves, catching, crafting, the PAC, time of day, star ratings and names all
 work exactly the same way.
 
 - **Five tabs:**
@@ -432,16 +433,18 @@ cc -std=c11 -Wall -Wextra -Isrc src/game.c src/scanner_parse.c tests/test_game.c
 ```
 application.fam        App manifest
 echoids.png            10x10 app icon
-src/echoids.c          App entry, screens, input, game loop
+src/echoids.c          Flipper UI: screens and input only, driving a session
+src/session.[ch]       The game session, shared by both apps: scanning, nearby echoids,
+                       time of day, shards, battles, catching, items, team and PAC
 src/game.[ch]          Generation from MACs, stats, crafting, battle rules (no SDK)
-src/scanner.[ch]       UART link to the ESP32 board, scan cycling, demo source
+src/scanner.[ch]       UART link to the ESP32 board and scan cycling
 src/scanner_parse.c    Marauder / CSV line parser (no SDK)
 src/save.[ch]          Save file (team, items, settings) and upgrades from old versions
 src/pac_store.[ch]     PAC storage file on the SD card (unlimited stored echoids)
 tests/test_game.c      Host-side unit tests
 android/               Android app: native Java UI and radios (app/src/main/java), and a
-                       game engine plus JNI bridge (app/src/main/cpp) around the same src/
-android/tests/         PC tests: the Android engine (engine_test.c), and the Flipper UI
+                       JSON view of src/session.c plus the JNI bridge (app/src/main/cpp)
+android/tests/         PC tests: the session via the Android API (engine_test.c), the Flipper UI
                        run on an SDK shim (flipper_ui/), checking every main screen
 tools/gen_wiki.c       Generates the wiki pages from the game tables
 docs/wiki/             Wiki: Home, Echoids, Types, Types and Moves, Battles, Items and Crafting

@@ -2,7 +2,6 @@
  * Scanner for the phone build: implements scanner.h using the phone's own
  * WiFi and Bluetooth radios. The Java side scans and pushes sightings in with
  * scanner_phone_push(); the game polls them exactly as it would from an ESP32.
- * Demo mode works as on the Flipper.
  */
 #include <pthread.h>
 
@@ -12,9 +11,7 @@
 #include <furi.h>
 #include <furi_hal.h>
 
-#define QUEUE_MAX        64
-#define DEMO_INTERVAL_MS 1800
-#define DEMO_POOL        24
+#define QUEUE_MAX 64
 
 const uint32_t scanner_baud_rates[] = {115200};
 const size_t scanner_baud_count = 1;
@@ -40,7 +37,6 @@ struct Scanner {
     ScanSource source;
     ScanConfig cfg;
     ScanPhase phase;
-    uint32_t last_demo;
     ScanStats stats;
 };
 
@@ -93,7 +89,6 @@ bool scanner_start(Scanner* s, ScanSource source, const ScanConfig* cfg) {
     s->source = source;
     s->cfg = *cfg;
     s->phase = ScanPhaseWifi;
-    s->last_demo = furi_get_tick();
     memset(&s->stats, 0, sizeof(s->stats));
     pthread_mutex_lock(&lock);
     q_count = 0;
@@ -126,39 +121,12 @@ void scanner_send_cmd(Scanner* s, const char* cmd) {
     UNUSED(cmd);
 }
 
-static const char* const demo_names[] = {
-    "HomeNet",  "CoffeeBar", "FreeWiFi", "Linksys", "NETGEAR42", "Office-5G",
-    "Pixel_7",  "TP-Link",   "Guest",    "Library", "Airport",   "Hotel_Lobby",
-};
-
-static bool scanner_demo(Scanner* s, ScanEvent* out) {
-    uint32_t now = furi_get_tick();
-    if(now - s->last_demo < DEMO_INTERVAL_MS) return false;
-    s->last_demo = now;
-    memset(out, 0, sizeof(*out));
-    uint32_t idx = furi_hal_random_get() % DEMO_POOL;
-    bool bt = s->cfg.bt_enabled && (furi_hal_random_get() % 3 == 0);
-    out->type = bt ? ScanEventBt : ScanEventAp;
-    out->mac[0] = bt ? 0xD0 : 0xDE;
-    out->mac[1] = 0x00;
-    out->mac[2] = 0x5E;
-    out->mac[3] = (uint8_t)(idx * 37);
-    out->mac[4] = (uint8_t)(idx * 101 + 7);
-    out->mac[5] = (uint8_t)idx;
-    out->rssi = (int8_t)(-40 - (int)(furi_hal_random_get() % 50));
-    if(bt)
-        snprintf(out->name, SCAN_NAME_LEN, "BLE-%02X%02X", out->mac[4], out->mac[5]);
-    else
-        snprintf(out->name, SCAN_NAME_LEN, "%s", demo_names[idx % 12]);
-    s->phase = bt ? ScanPhaseBt : ScanPhaseWifi;
-    return true;
-}
-
 bool scanner_poll(Scanner* s, ScanEvent* out) {
     if(!s->running) return false;
     bool got = false;
+    /* Demo sightings come from the game session, as on the Flipper. */
     if(s->source == ScanSourceDemo) {
-        got = scanner_demo(s, out);
+        s->phase = ScanPhaseWifi;
     } else {
         pthread_mutex_lock(&lock);
         if(q_count) {

@@ -13,8 +13,6 @@
 #define BT_PHASE_MS      12000
 #define RESEND_MS        4000
 #define PARTIAL_FLUSH_MS 400
-#define DEMO_INTERVAL_MS 1800
-#define DEMO_POOL        24
 
 const uint32_t scanner_baud_rates[] = {115200, 230400, 460800, 921600, 57600, 38400, 9600};
 const size_t scanner_baud_count = sizeof(scanner_baud_rates) / sizeof(scanner_baud_rates[0]);
@@ -63,7 +61,6 @@ struct Scanner {
     uint32_t phase_started;
     uint32_t last_cmd_tick;
     uint32_t bytes_at_cmd;
-    uint32_t last_demo;
     const char* error;
     bool bt_unsupported;
 
@@ -222,7 +219,6 @@ static bool scanner_open(Scanner* s, ScanSource source, const ScanConfig* cfg, b
     s->line_len = 0;
     s->cmd_pending = false;
     s->phase = ScanPhaseIdle;
-    s->last_demo = furi_get_tick();
     s->ready_tick = furi_get_tick();
     s->bt_unsupported = false;
     s->last_rx[0] = '\0';
@@ -386,42 +382,6 @@ static void scanner_update_phase(Scanner* s) {
     }
 }
 
-static const char* const demo_names[] = {
-    "HomeNet",  "CoffeeBar", "FreeWiFi", "Linksys", "NETGEAR42", "Office-5G",
-    "Pixel_7",  "TP-Link",   "Guest",    "Library", "Airport",   "Hotel_Lobby",
-};
-
-static bool scanner_demo(Scanner* s, ScanEvent* out) {
-    uint32_t now = furi_get_tick();
-    if(now - s->last_demo < furi_ms_to_ticks(DEMO_INTERVAL_MS)) return false;
-    s->last_demo = now;
-    memset(out, 0, sizeof(*out));
-
-    /* A fixed pool of fake devices so they reappear (and stay the same). */
-    uint32_t idx = furi_hal_random_get() % DEMO_POOL;
-    bool bt = s->cfg.bt_enabled && s->phase == ScanPhaseBt;
-    out->type = bt ? ScanEventBt : ScanEventAp;
-    out->mac[0] = bt ? 0xD0 : 0xDE;
-    out->mac[1] = 0x00;
-    out->mac[2] = 0x5E;
-    out->mac[3] = (uint8_t)(idx * 37);
-    out->mac[4] = (uint8_t)(idx * 101 + 7);
-    out->mac[5] = (uint8_t)idx;
-    out->rssi = (int8_t)(-40 - (int)(furi_hal_random_get() % 50));
-    if(bt) {
-        snprintf(out->name, SCAN_NAME_LEN, "BLE-%02X%02X", out->mac[4], out->mac[5]);
-        s->stats.bts++;
-    } else {
-        snprintf(
-            out->name,
-            SCAN_NAME_LEN,
-            "%s",
-            demo_names[idx % (sizeof(demo_names) / sizeof(demo_names[0]))]);
-        s->stats.aps++;
-    }
-    return true;
-}
-
 static bool scanner_handle_record(Scanner* s, char* rec, size_t len, ScanEvent* out) {
     rec[len] = '\0';
     s->stats.lines++;
@@ -475,7 +435,8 @@ bool scanner_poll(Scanner* s, ScanEvent* out) {
     if(!s->running) return false;
     scanner_update_phase(s);
 
-    if(s->source == ScanSourceDemo) return scanner_demo(s, out);
+    /* Demo sightings come from the game session (session.c), not the board. */
+    if(s->source == ScanSourceDemo) return false;
 
     uint8_t byte;
     while(furi_stream_buffer_receive(s->rx, &byte, 1, 0) == 1) {

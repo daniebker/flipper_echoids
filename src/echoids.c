@@ -18,6 +18,7 @@
 
 #include "game.h"
 #include "pac_store.h"
+#include "session.h"
 
 #define SOURCE_LABEL       "ESP32 board"
 #define SOURCE_LABEL_SHORT "ESP32"
@@ -25,20 +26,13 @@
 #include "save.h"
 #include "scanner.h"
 
-#define NEARBY_MAX       24
-#define REGEN_MS         5000
-#define AUTOSAVE_MS      20000
 #define TOAST_MS         2500
 #define BOARD_TIMEOUT_MS 6000
 #define TEAM_ROWS        5
 #define NEARBY_ROWS      3
 #define CRAFT_ROWS       3
-#define SPOTTED_MAX      128
-#define RECHARGE_NOTED_MAX 48
-#define RESULT_LINES_MAX   24
 #define RESULT_ROWS        5
 #define BAG_ROWS           5
-#define ASLEEP_MAX         64
 
 typedef enum {
     ScreenIntro,
@@ -62,19 +56,6 @@ typedef enum {
     ScreenBattleResult, /* after a battle: XP, level-ups and new moves per echoid */
 } Screen;
 
-typedef enum {
-    NearbyWild,
-    NearbyOwned,
-    NearbyDone, /* defeated or fled this session */
-} NearbyState;
-
-typedef struct {
-    uint8_t mac[6];
-    int8_t rssi;
-    uint8_t state;
-    char ssid[NAME_LEN];
-} Nearby;
-
 typedef struct {
     FuriMutex* mutex;
     FuriMessageQueue* queue;
@@ -83,34 +64,23 @@ typedef struct {
     NotificationApp* notif;
     Scanner* scanner;
 
-    SaveData save;
-    bool dirty;
+    /* The game itself: every rule lives in session.c. This file only draws
+     * it and turns button presses into session actions. */
+    Session s;
     bool running;
-    uint32_t last_save;
-    uint32_t last_regen;
     uint32_t scan_started;
 
     Screen screen;
     uint8_t menu_idx;
     uint8_t menu_scroll;
 
-    Nearby nearby[NEARBY_MAX];
-    uint8_t nearby_count;
     uint8_t nearby_idx;
     uint8_t nearby_scroll;
-    uint8_t nearby_next_replace;
 
-    Battle battle;
-    int8_t battle_nearby;
     uint8_t battle_menu;
     uint8_t move_idx;
     uint8_t bswap_idx;
     uint8_t bswap_scroll;
-    bool bswap_forced; /* the active echoid fainted: must pick a replacement */
-
-    /* Battle results lines */
-    char result_lines[RESULT_LINES_MAX][32];
-    uint8_t result_count;
     uint8_t result_scroll;
     uint8_t detail_page; /* details screen page: DetailStats, DetailMoves, DetailRating */
     uint8_t ball_idx;
@@ -159,34 +129,14 @@ typedef struct {
     int16_t cal_best;
     char cal_result[32];
 
-    /* Counters for this outing (since the app was opened). */
-    uint32_t spotted[SPOTTED_MAX]; /* MAC hashes of echoids already counted */
-    uint16_t spotted_count;
-    uint16_t shards_this_run;
-
     char toast[40];
     uint32_t toast_until;
     bool toast_important; /* a "+1 shard" popup: don't cover it with a recharge note */
-
-    /* Time of day: wild echoids only come out at certain hours. */
-    uint8_t hour; /* current local hour, 0-23 */
-    uint8_t hour_checked; /* hour the nearby list was last pruned for */
-    uint32_t asleep[ASLEEP_MAX]; /* MAC hashes heard this hour but not out now */
-    uint16_t asleep_count;
-
-    /* Devices whose "recharging" popup was already shown this Collect visit. */
-    uint32_t recharge_noted[RECHARGE_NOTED_MAX];
-    uint8_t recharge_noted_count;
 } App;
 
 /* ------------------------------------------------------------------------- */
 /* Helpers                                                                   */
 /* ------------------------------------------------------------------------- */
-
-static bool app_in_battle(App* app) {
-    return app->screen == ScreenBattle || app->screen == ScreenBallPick ||
-           app->screen == ScreenMovePick || app->screen == ScreenBattleSwap;
-}
 
 static void app_toast(App* app, const char* msg) {
     strncpy(app->toast, msg, sizeof(app->toast) - 1);
@@ -199,18 +149,6 @@ static bool app_toast_showing(App* app) {
     return app->toast[0] && (int32_t)(app->toast_until - furi_get_tick()) > 0;
 }
 
-static Echoid* app_lead(App* app) {
-    return &app->save.team[app->save.lead];
-}
-
-/* In the team or stored in the PAC (the PAC check reads the SD card). */
-static bool app_owns(App* app, const uint8_t mac[6]) {
-    for(uint8_t i = 0; i < app->save.team_count; i++) {
-        if(memcmp(app->save.team[i].mac, mac, 6) == 0) return true;
-    }
-    return pac_find(mac, app->save.pac_count) != PAC_NOT_FOUND;
-}
-
 /* Array indexes of the team (party=true) or the PAC. */
 static void pac_invalidate(App* app) {
     app->pac_page_valid = false;
@@ -221,85 +159,25 @@ static void pac_refresh(App* app) {
     if(app->pac_page_valid && app->pac_page_start == app->pac_scroll) return;
     app->pac_page_start = app->pac_scroll;
     app->pac_page_n = 0;
-    if(app->pac_scroll < app->save.pac_count) {
-        uint32_t left = app->save.pac_count - app->pac_scroll;
+    if(app->pac_scroll < app->s.save.pac_count) {
+        uint32_t left = app->s.save.pac_count - app->pac_scroll;
         uint8_t want = left < TEAM_ROWS ? (uint8_t)left : TEAM_ROWS;
         app->pac_page_n = pac_read_page(app->pac_scroll, app->pac_page, want);
     }
     app->pac_page_valid = true;
 }
 
-static bool pac_has_room(App* app) {
-    return app->save.pac_count < save_pac_capacity(&app->save);
-}
-
-static void app_new_game(App* app) {
-    /* Keep the board configuration when starting over. Only the settings are
-     * copied: the whole SaveData is too big for the app's stack. */
-    SaveData* sv = &app->save;
-    bool keep = sv->magic == SAVE_MAGIC;
-    uint8_t cfg[11] = {
-        sv->source,
-        sv->uart,
-        sv->bt_enabled,
-        sv->baud_idx,
-        sv->power,
-        sv->boot_idx,
-        sv->eol,
-        sv->wifi_cmd,
-        sv->bt_cmd,
-        sv->log_sd,
-        0};
-    memset(sv, 0, sizeof(*sv));
-    sv->magic = SAVE_MAGIC;
-    sv->version = SAVE_VERSION;
-    sv->source = ScanSourceBoard;
-    sv->uart = ScanUartUsart;
-    sv->bt_enabled = 1;
-    if(keep) {
-        sv->source = cfg[0];
-        sv->uart = cfg[1];
-        sv->bt_enabled = cfg[2];
-        sv->baud_idx = cfg[3];
-        sv->power = cfg[4];
-        sv->boot_idx = cfg[5];
-        sv->eol = cfg[6];
-        sv->wifi_cmd = cfg[7];
-        sv->bt_cmd = cfg[8];
-        sv->log_sd = cfg[9];
-    }
-
-    /* The starter is born from this Flipper's own Bluetooth MAC. */
-    const uint8_t* mac = furi_hal_version_get_ble_mac();
-    const char* name = furi_hal_version_get_name_ptr();
-    echo_init(&app->save.team[0], mac, 1, name ? name : "Flipper");
-    app->save.pacs = 1; /* room for PAC_SIZE echoids in storage to start */
-    app->save.pac_count = 0;
-    pac_clear();
-    app->pac_page_valid = false;
-    app->save.team_count = 1;
-    app->save.lead = 0;
-    app->dirty = true;
-}
-
 static void app_scan_config(App* app, ScanConfig* cfg) {
     memset(cfg, 0, sizeof(*cfg));
-    cfg->uart = app->save.uart % ScanUartCount;
-    cfg->baud_idx = app->save.baud_idx % scanner_baud_count;
-    cfg->power = app->save.power % ScanPowerCount;
-    cfg->boot_idx = app->save.boot_idx % scanner_boot_count;
-    cfg->eol = app->save.eol & 1;
-    cfg->wifi_cmd = app->save.wifi_cmd % scanner_wifi_cmd_count;
-    cfg->bt_cmd = app->save.bt_cmd % scanner_bt_cmd_count;
-    cfg->bt_enabled = app->save.bt_enabled;
-    cfg->log_sd = app->save.log_sd;
-}
-
-static void app_save(App* app) {
-    if(save_store(&app->save)) {
-        app->dirty = false;
-    }
-    app->last_save = furi_get_tick();
+    cfg->uart = app->s.save.uart % ScanUartCount;
+    cfg->baud_idx = app->s.save.baud_idx % scanner_baud_count;
+    cfg->power = app->s.save.power % ScanPowerCount;
+    cfg->boot_idx = app->s.save.boot_idx % scanner_boot_count;
+    cfg->eol = app->s.save.eol & 1;
+    cfg->wifi_cmd = app->s.save.wifi_cmd % scanner_wifi_cmd_count;
+    cfg->bt_cmd = app->s.save.bt_cmd % scanner_bt_cmd_count;
+    cfg->bt_enabled = app->s.save.bt_enabled;
+    cfg->log_sd = app->s.save.log_sd;
 }
 
 static const char* nearby_state_mark(uint8_t state) {
@@ -419,7 +297,7 @@ static const char* const menu_items[] = {"Collect", "Team", "PAC", "Craft", "Bag
 #define MENU_ROWS  5
 
 static void draw_intro(App* app, Canvas* canvas) {
-    Echoid* e = app_lead(app);
+    Echoid* e = session_lead(&app->s);
     EchoGenes g;
     echo_genes(e->mac, &g);
     canvas_set_font(canvas, FontPrimary);
@@ -441,7 +319,7 @@ static void draw_intro(App* app, Canvas* canvas) {
 }
 
 static void draw_menu(App* app, Canvas* canvas) {
-    Echoid* e = app_lead(app);
+    Echoid* e = session_lead(&app->s);
     EchoStats s;
     echo_stats(e, &s);
     draw_title(canvas, "Echoids", NULL);
@@ -455,7 +333,7 @@ static void draw_menu(App* app, Canvas* canvas) {
         if(i == MenuPac) {
             /* How many echoids are in storage */
             char n[12];
-            snprintf(n, sizeof(n), "%lu", (unsigned long)app->save.pac_count);
+            snprintf(n, sizeof(n), "%lu", (unsigned long)app->s.save.pac_count);
             canvas_draw_str_aligned(canvas, 76, y, AlignRight, AlignBottom, n);
         }
     }
@@ -503,19 +381,19 @@ static void draw_collect(App* app, Canvas* canvas) {
     /* Header counters: echoids spotted and shards collected this outing. */
     char num[8];
     canvas_set_font(canvas, FontSecondary);
-    snprintf(num, sizeof(num), "%u", app->shards_this_run);
+    snprintf(num, sizeof(num), "%u", app->s.shards_this_run);
     int x = 127 - (int)canvas_string_width(canvas, num);
     canvas_draw_str(canvas, x, 10, num);
     x -= 9;
     draw_shard_icon(canvas, x, 3);
     x -= 6;
-    snprintf(num, sizeof(num), "%u", app->spotted_count);
+    snprintf(num, sizeof(num), "%u", app->s.spotted_count);
     x -= (int)canvas_string_width(canvas, num);
     canvas_draw_str(canvas, x, 10, num);
     x -= 9;
     draw_ball_icon(canvas, x, 3);
 
-    if(app->nearby_count == 0) {
+    if(app->s.nearby_count == 0) {
         const char* err = scanner_error(app->scanner);
         uint32_t waited = furi_get_tick() - app->scan_started;
         if(err) {
@@ -523,19 +401,19 @@ static void draw_collect(App* app, Canvas* canvas) {
             canvas_draw_str_aligned(canvas, 64, 38, AlignCenter, AlignCenter, "Settings > Board setup");
         } else if(scanner_booting(app->scanner)) {
             canvas_draw_str_aligned(canvas, 64, 32, AlignCenter, AlignCenter, "Powering up board...");
-        } else if(app->asleep_count > 0) {
+        } else if(app->s.asleep_count > 0) {
             /* Access points were heard, but their echoids aren't out at this hour. */
             char info[40];
             snprintf(
                 info,
                 sizeof(info),
                 "%u echo%s asleep at %02u:00",
-                app->asleep_count,
-                app->asleep_count == 1 ? "id" : "ids",
-                app->hour);
+                app->s.asleep_count,
+                app->s.asleep_count == 1 ? "id" : "ids",
+                app->s.hour);
             canvas_draw_str_aligned(canvas, 64, 28, AlignCenter, AlignCenter, info);
             canvas_draw_str_aligned(canvas, 64, 40, AlignCenter, AlignCenter, "Come back at another hour!");
-        } else if(app->save.source == ScanSourceDemo) {
+        } else if(app->s.save.source == ScanSourceDemo) {
             canvas_draw_str_aligned(canvas, 64, 32, AlignCenter, AlignCenter, "Listening for echoes...");
         } else {
             /* Explain exactly what the board is (not) doing. */
@@ -591,8 +469,10 @@ static void draw_collect(App* app, Canvas* canvas) {
 
     for(uint8_t row = 0; row < NEARBY_ROWS; row++) {
         uint8_t i = app->nearby_scroll + row;
-        if(i >= app->nearby_count) break;
-        Nearby* n = &app->nearby[i];
+        if(i >= app->s.nearby_count) break;
+        Nearby* n = &app->s.nearby[i];
+        Echoid wild;
+        session_nearby_echoid(&app->s, i, &wild);
         int y = 23 + row * 10;
         draw_row(canvas, y, i == app->nearby_idx);
         EchoGenes g;
@@ -602,7 +482,7 @@ static void draw_collect(App* app, Canvas* canvas) {
         echo_name(n->mac, name, sizeof(name));
         snprintf(buf, sizeof(buf), "%s%s", nearby_state_mark(n->state), name);
         canvas_draw_str(canvas, 2, y, buf);
-        snprintf(buf, sizeof(buf), "L%u", echo_wild_level(n->mac, app_lead(app)->level));
+        snprintf(buf, sizeof(buf), "L%u", wild.level);
         canvas_draw_str(canvas, 58, y, buf);
         canvas_draw_str(canvas, 76, y, echo_type_short(g.type));
         draw_rarity(canvas, 95, y, g.rarity);
@@ -610,17 +490,17 @@ static void draw_collect(App* app, Canvas* canvas) {
         canvas_draw_str_aligned(canvas, 121, y, AlignRight, AlignBottom, buf);
     }
     canvas_set_color(canvas, ColorBlack);
-    if(app->nearby_count > NEARBY_ROWS) {
-        elements_scrollbar_pos(canvas, 127, 14, 31, app->nearby_idx, app->nearby_count);
+    if(app->s.nearby_count > NEARBY_ROWS) {
+        elements_scrollbar_pos(canvas, 127, 14, 31, app->nearby_idx, app->s.nearby_count);
     }
 
     /* Stats panel for the selected echoid, at the level it would battle at. */
-    if(app->nearby_count > 0 && app->nearby_idx < app->nearby_count) {
-        Nearby* n = &app->nearby[app->nearby_idx];
+    if(app->s.nearby_count > 0 && app->nearby_idx < app->s.nearby_count) {
+        Nearby* n = &app->s.nearby[app->nearby_idx];
         EchoGenes g;
         echo_genes(n->mac, &g);
         Echoid wild;
-        echo_init(&wild, n->mac, echo_wild_level(n->mac, app_lead(app)->level), NULL);
+        session_nearby_echoid(&app->s, app->nearby_idx, &wild);
         EchoStats st;
         echo_stats(&wild, &st);
         char buf[40];
@@ -639,7 +519,7 @@ static void draw_collect(App* app, Canvas* canvas) {
 }
 
 static void draw_battle(App* app, Canvas* canvas) {
-    Battle* b = &app->battle;
+    Battle* b = &app->s.battle;
     char buf[40];
     EchoStats sw, sm;
     echo_stats(&b->wild, &sw);
@@ -691,14 +571,15 @@ static void draw_battle(App* app, Canvas* canvas) {
         canvas_draw_str_aligned(canvas, 64, 63, AlignCenter, AlignBottom, "OK: continue");
         canvas_set_color(canvas, ColorBlack);
     }
+    draw_toast(app, canvas);
 }
 
 static void draw_move_pick(App* app, Canvas* canvas) {
     draw_battle(app, canvas);
     Move moves[MAX_MOVES];
-    uint8_t n = echo_moves(app->battle.mine, moves);
+    uint8_t n = echo_moves(app->s.battle.mine, moves);
     EchoGenes gw;
-    echo_genes(app->battle.wild.mac, &gw);
+    echo_genes(app->s.battle.wild.mac, &gw);
     canvas_set_color(canvas, ColorWhite);
     canvas_draw_box(canvas, 6, 6, 116, 48);
     canvas_set_color(canvas, ColorBlack);
@@ -713,7 +594,7 @@ static void draw_move_pick(App* app, Canvas* canvas) {
         }
         canvas_draw_str(canvas, 10, y, moves[i].name);
         /* How it fares against this wild echoid */
-        uint8_t mult = moves[i].type == MOVE_NEUTRAL ? 100 : echo_type_mult(moves[i].type, gw.type);
+        uint8_t mult = move_mult(&moves[i], gw.type);
         canvas_draw_str(canvas, 72, y, mult > 100 ? "x2" : (mult < 100 ? "x.5" : ""));
         canvas_draw_str(canvas, 86, y, move_type_short(&moves[i]));
         snprintf(buf, sizeof(buf), "%u", moves[i].power);
@@ -724,16 +605,16 @@ static void draw_move_pick(App* app, Canvas* canvas) {
 
 static void draw_battle_result(App* app, Canvas* canvas) {
     char right[24];
-    snprintf(right, sizeof(right), "+%lu XP", (unsigned long)app->battle.xp_gained);
+    snprintf(right, sizeof(right), "+%lu XP", (unsigned long)app->s.battle.xp_gained);
     draw_title(canvas, "Results", right);
     for(uint8_t row = 0; row < RESULT_ROWS; row++) {
         uint8_t i = app->result_scroll + row;
-        if(i >= app->result_count) break;
-        canvas_draw_str(canvas, 2, 22 + row * 10, app->result_lines[i]);
+        if(i >= app->s.result_count) break;
+        canvas_draw_str(canvas, 2, 22 + row * 10, app->s.results[i]);
     }
-    if(app->result_count > RESULT_ROWS)
+    if(app->s.result_count > RESULT_ROWS)
         elements_scrollbar_pos(
-            canvas, 127, 14, 48, app->result_scroll, app->result_count - RESULT_ROWS + 1);
+            canvas, 127, 14, 48, app->result_scroll, app->s.result_count - RESULT_ROWS + 1);
 }
 
 static void draw_ball_pick(App* app, Canvas* canvas) {
@@ -752,9 +633,9 @@ static void draw_ball_pick(App* app, Canvas* canvas) {
             canvas_set_color(canvas, ColorWhite);
         }
         canvas_draw_str(canvas, 19, y, item_name(i));
-        snprintf(buf, sizeof(buf), "x%u", app->save.inv.items[i]);
+        snprintf(buf, sizeof(buf), "x%u", app->s.save.inv.items[i]);
         canvas_draw_str(canvas, 70, y, buf);
-        snprintf(buf, sizeof(buf), "%u%%", echo_capture_chance(&app->battle.wild, i));
+        snprintf(buf, sizeof(buf), "%u%%", echo_capture_chance(&app->s.battle.wild, i));
         canvas_draw_str_aligned(canvas, 109, y, AlignRight, AlignBottom, buf);
         canvas_set_color(canvas, ColorBlack);
     }
@@ -812,23 +693,23 @@ static void draw_roster(
 
 /* The team as a roster list. */
 static void draw_team_roster(App* app, Canvas* canvas, const char* title, const char* right, uint8_t sel, uint8_t scroll) {
-    uint8_t n = app->save.team_count > scroll ? app->save.team_count - scroll : 0;
+    uint8_t n = app->s.save.team_count > scroll ? app->s.save.team_count - scroll : 0;
     draw_roster(
-        app, canvas, title, right, &app->save.team[scroll], n, app->save.team_count, sel, scroll, app->save.lead);
+        app, canvas, title, right, &app->s.save.team[scroll], n, app->s.save.team_count, sel, scroll, app->s.save.lead);
 }
 
 static void draw_team(App* app, Canvas* canvas) {
     char buf[24];
     if(app->team_tab == 0) {
-        snprintf(buf, sizeof(buf), "%u/%u  <>", app->save.team_count, PARTY_MAX);
+        snprintf(buf, sizeof(buf), "%u/%u  <>", app->s.save.team_count, PARTY_MAX);
         draw_team_roster(app, canvas, "Team", buf, app->team_idx, app->team_scroll);
     } else {
         snprintf(
             buf,
             sizeof(buf),
             "%lu/%lu  <>",
-            (unsigned long)app->save.pac_count,
-            (unsigned long)save_pac_capacity(&app->save));
+            (unsigned long)app->s.save.pac_count,
+            (unsigned long)save_pac_capacity(&app->s.save));
         draw_roster(
             app,
             canvas,
@@ -836,7 +717,7 @@ static void draw_team(App* app, Canvas* canvas) {
             buf,
             app->pac_page,
             app->pac_page_valid ? app->pac_page_n : 0,
-            app->save.pac_count,
+            app->s.save.pac_count,
             app->pac_idx,
             app->pac_scroll,
             -1);
@@ -845,17 +726,17 @@ static void draw_team(App* app, Canvas* canvas) {
 }
 
 static void draw_battle_swap(App* app, Canvas* canvas) {
-    uint8_t n = app->save.team_count > app->bswap_scroll ? app->save.team_count - app->bswap_scroll : 0;
-    int32_t active = (int32_t)(app->battle.mine - app->save.team);
+    uint8_t n = app->s.save.team_count > app->bswap_scroll ? app->s.save.team_count - app->bswap_scroll : 0;
+    int32_t active = (int32_t)(app->s.battle.mine - app->s.save.team);
     /* ">" marks the echoid currently fighting. */
     draw_roster(
         app,
         canvas,
-        app->bswap_forced ? "Send in who?" : "Switch to?",
+        app->s.must_switch ? "Send in who?" : "Switch to?",
         NULL,
-        &app->save.team[app->bswap_scroll],
+        &app->s.save.team[app->bswap_scroll],
         n,
-        app->save.team_count,
+        app->s.save.team_count,
         app->bswap_idx,
         app->bswap_scroll,
         active);
@@ -869,13 +750,13 @@ static void draw_swap(App* app, Canvas* canvas) {
 
 static void draw_use_on(App* app, Canvas* canvas) {
     char buf[16];
-    snprintf(buf, sizeof(buf), "x%u", app->save.inv.items[app->use_item_id]);
+    snprintf(buf, sizeof(buf), "x%u", app->s.save.inv.items[app->use_item_id]);
     draw_team_roster(
         app,
         canvas,
-        item_heal_amount(app->use_item_id) ? "Heal who?" :
-        app->use_item_id == ItemRevive    ? "Revive who?" :
-                                            "Crystal on?",
+        session_item_use(app->use_item_id) == ItemUseHeal   ? "Heal who?" :
+        session_item_use(app->use_item_id) == ItemUseRevive ? "Revive who?" :
+                                                              "Crystal on?",
         buf,
         app->use_idx,
         app->use_scroll);
@@ -885,11 +766,11 @@ static void draw_use_on(App* app, Canvas* canvas) {
 /* The echoid on the detail screen, its position and the list size. */
 static const Echoid* detail_target(App* app, uint32_t* pos, uint32_t* n) {
     if(app->team_tab == 0) {
-        *n = app->save.team_count;
+        *n = app->s.save.team_count;
         *pos = app->team_idx < *n ? app->team_idx : 0;
-        return &app->save.team[*pos];
+        return &app->s.save.team[*pos];
     }
-    *n = app->save.pac_count;
+    *n = app->s.save.pac_count;
     *pos = app->pac_idx;
     return &app->pac_view;
 }
@@ -900,7 +781,7 @@ static const char* const detail_pac_actions[] = {"Move to team"};
 static void draw_detail(App* app, Canvas* canvas) {
     uint32_t pos, n;
     const Echoid* e = detail_target(app, &pos, &n);
-    bool is_lead = app->team_tab == 0 && pos == app->save.lead;
+    bool is_lead = app->team_tab == 0 && pos == app->s.save.lead;
     EchoGenes g;
     echo_genes(e->mac, &g);
     EchoStats s;
@@ -974,14 +855,10 @@ static void draw_detail(App* app, Canvas* canvas) {
             snprintf(buf, sizeof(buf), "Knows its final moves");
         canvas_draw_str(canvas, 0, 55, buf);
         /* The two opposed types this echoid can never learn moves of. */
-        EchoGenes ge;
-        echo_genes(e->mac, &ge);
+        uint8_t cant[2];
+        echo_unlearnable_types(g.type, cant);
         snprintf(
-            buf,
-            sizeof(buf),
-            "Can't learn %s or %s",
-            echo_type_name((uint8_t)((ge.type + 1) % ECHO_TYPE_COUNT)),
-            echo_type_name((uint8_t)((ge.type + ECHO_TYPE_COUNT - 1) % ECHO_TYPE_COUNT)));
+            buf, sizeof(buf), "Can't learn %s or %s", echo_type_name(cant[0]), echo_type_name(cant[1]));
         canvas_draw_str(canvas, 0, 63, buf);
     } else {
         /* Species and where it was found */
@@ -1015,18 +892,9 @@ static void draw_detail(App* app, Canvas* canvas) {
     draw_toast(app, canvas);
 }
 
-static bool recipe_is_pac(size_t i) {
-    return recipes[i].out == CRAFT_OUT_PAC;
-}
-
-/* Craftable now: enough shards, and for a PAC, not already at the limit. */
-static bool app_can_craft(App* app, size_t i) {
-    return craft_can(&app->save.inv, i);
-}
-
 static void draw_craft(App* app, Canvas* canvas) {
     char buf[32];
-    snprintf(buf, sizeof(buf), "Shards %lu", (unsigned long)inventory_shard_total(&app->save.inv));
+    snprintf(buf, sizeof(buf), "Shards %lu", (unsigned long)inventory_shard_total(&app->s.save.inv));
     draw_title(canvas, "Craft", buf);
     for(uint8_t row = 0; row < CRAFT_ROWS; row++) {
         uint8_t i = app->craft_scroll + row;
@@ -1034,19 +902,16 @@ static void draw_craft(App* app, Canvas* canvas) {
         const Recipe* r = &recipes[i];
         int y = 22 + row * 10;
         draw_row(canvas, y, i == app->craft_idx);
-        snprintf(buf, sizeof(buf), "%s%s", app_can_craft(app, i) ? "+" : " ", r->name);
+        snprintf(buf, sizeof(buf), "%s%s", craft_can(&app->s.save.inv, i) ? "+" : " ", r->name);
         canvas_draw_str(canvas, 2, y, buf);
-        if(recipe_is_pac(i))
-            snprintf(buf, sizeof(buf), "have %lu", (unsigned long)app->save.pacs);
-        else
-            snprintf(buf, sizeof(buf), "have %u", app->save.inv.items[r->out]);
+        snprintf(buf, sizeof(buf), "have %lu", (unsigned long)session_recipe_have(&app->s, i));
         canvas_draw_str_aligned(canvas, 121, y, AlignRight, AlignBottom, buf);
     }
     canvas_set_color(canvas, ColorBlack);
     canvas_draw_line(canvas, 0, 46, 127, 46);
     canvas_draw_str(canvas, 2, 55, recipes[app->craft_idx].recipe);
     const char* status = "OK: craft";
-    if(!craft_can(&app->save.inv, app->craft_idx)) status = "Not enough shards";
+    if(!craft_can(&app->s.save.inv, app->craft_idx)) status = "Not enough shards";
     canvas_draw_str(canvas, 2, 63, status);
     elements_scrollbar_pos(canvas, 127, 14, 31, app->craft_idx, recipe_count);
     draw_toast(app, canvas);
@@ -1062,7 +927,7 @@ static void draw_bag(App* app, Canvas* canvas) {
             int y = 22 + row * 10;
             draw_row(canvas, y, i == app->bag_idx);
             canvas_draw_str(canvas, 2, y, item_name(i));
-            snprintf(buf, sizeof(buf), "x%u", app->save.inv.items[i]);
+            snprintf(buf, sizeof(buf), "x%u", app->s.save.inv.items[i]);
             canvas_draw_str_aligned(canvas, 121, y, AlignRight, AlignBottom, buf);
         }
         canvas_set_color(canvas, ColorBlack);
@@ -1077,9 +942,9 @@ static void draw_bag(App* app, Canvas* canvas) {
                 sizeof(buf),
                 "%s %u/%u/%u",
                 echo_type_short(t),
-                app->save.inv.shards[t][0],
-                app->save.inv.shards[t][1],
-                app->save.inv.shards[t][2]);
+                app->s.save.inv.shards[t][0],
+                app->s.save.inv.shards[t][1],
+                app->s.save.inv.shards[t][2]);
             canvas_draw_str(canvas, x, y, buf);
         }
     }
@@ -1095,7 +960,7 @@ static void draw_settings(App* app, Canvas* canvas) {
         l0,
         sizeof(l0),
         BOARD_TITLE " (%s)",
-        app->save.source == ScanSourceDemo ? "Demo" : SOURCE_LABEL_SHORT);
+        app->s.save.source == ScanSourceDemo ? "Demo" : SOURCE_LABEL_SHORT);
     const char* lines[SETTINGS_COUNT] = {
         l0,
         "How to play",
@@ -1324,7 +1189,7 @@ static const char* uart_short(uint8_t uart) {
 }
 
 static void board_row_text(App* app, uint8_t row, char* buf, size_t len) {
-    SaveData* sv = &app->save;
+    SaveData* sv = &app->s.save;
     switch(row) {
     case BoardSource:
         snprintf(buf, len, "Source: %s", sv->source == ScanSourceDemo ? "Demo" : SOURCE_LABEL);
@@ -1377,11 +1242,12 @@ static uint8_t cycle(uint8_t value, size_t count, int delta) {
 }
 
 static void board_change(App* app, uint8_t row, int delta) {
-    SaveData* sv = &app->save;
+    SaveData* sv = &app->s.save;
     switch(row) {
     case BoardSource:
-        sv->source = sv->source == ScanSourceDemo ? ScanSourceBoard : ScanSourceDemo;
-        break;
+        session_set_demo(&app->s, sv->source != ScanSourceDemo);
+        app->s.msg[0] = '\0'; /* the row shows the new value */
+        return;
     case BoardUart:
         sv->uart = cycle(sv->uart, ScanUartCount, delta);
         break;
@@ -1404,8 +1270,9 @@ static void board_change(App* app, uint8_t row, int delta) {
         sv->bt_cmd = cycle(sv->bt_cmd, scanner_bt_cmd_count, delta);
         break;
     case BoardBt:
-        sv->bt_enabled = !sv->bt_enabled;
-        break;
+        session_set_bluetooth(&app->s, !sv->bt_enabled);
+        app->s.msg[0] = '\0';
+        return;
     case BoardLog:
         sv->log_sd = !sv->log_sd;
         if(sv->log_sd) app_toast(app, "Saves to apps_data/echoids");
@@ -1413,7 +1280,7 @@ static void board_change(App* app, uint8_t row, int delta) {
     default:
         return;
     }
-    app->dirty = true;
+    app->s.dirty = true;
 }
 
 /* The rows shown, in order. */
@@ -1476,8 +1343,8 @@ static void draw_terminal(App* app, Canvas* canvas) {
         buf,
         sizeof(buf),
         "^%s v%lu",
-        uart_short(app->save.uart),
-        (unsigned long)scanner_baud_rates[app->save.baud_idx % scanner_baud_count]);
+        uart_short(app->s.save.uart),
+        (unsigned long)scanner_baud_rates[app->s.save.baud_idx % scanner_baud_count]);
     canvas_draw_str(canvas, 0, 7, buf);
     canvas_draw_str_aligned(
         canvas, 127, 7, AlignRight, AlignBottom, furi_hal_power_is_otg_enabled() ? "5V on" : "5V off");
@@ -1538,15 +1405,15 @@ static void terminal_input(App* app, InputEvent* ev, bool press) {
     } else if(press && (ev->key == InputKeyUp || ev->key == InputKeyDown)) {
         /* Change pins / baud on the fly and reopen the UART. */
         if(ev->key == InputKeyUp)
-            app->save.uart = cycle(app->save.uart, ScanUartCount, 1);
+            app->s.save.uart = cycle(app->s.save.uart, ScanUartCount, 1);
         else
-            app->save.baud_idx = cycle(app->save.baud_idx, scanner_baud_count, 1);
-        app->dirty = true;
+            app->s.save.baud_idx = cycle(app->s.save.baud_idx, scanner_baud_count, 1);
+        app->s.dirty = true;
         terminal_open(app);
     } else if(press && ev->key == InputKeyBack) {
         terminal_close(app);
         app->screen = ScreenBoard;
-        if(app->dirty) app_save(app);
+        if(app->s.dirty) session_save(&app->s);
     }
 }
 
@@ -1574,16 +1441,16 @@ static void calibrate_start(App* app) {
     app->cal_result[0] = '\0';
     app->cal_otg_by_us = false;
     uint32_t wait = 0;
-    if(app->save.power % ScanPowerCount != ScanPowerUntouched) {
+    if(app->s.save.power % ScanPowerCount != ScanPowerUntouched) {
         app->cal_otg_by_us = scanner_power_on();
-        if(app->cal_otg_by_us) wait = scanner_boot_waits_ms[app->save.boot_idx % scanner_boot_count];
+        if(app->cal_otg_by_us) wait = scanner_boot_waits_ms[app->s.save.boot_idx % scanner_boot_count];
     }
     app->cal_tick = furi_get_tick() + furi_ms_to_ticks(wait);
 }
 
 static void calibrate_stop(App* app) {
     scanner_stop(app->scanner);
-    if(app->cal_otg_by_us && app->save.power % ScanPowerCount == ScanPowerAuto) {
+    if(app->cal_otg_by_us && app->s.save.power % ScanPowerCount == ScanPowerAuto) {
         scanner_power_off();
     }
     app->cal_otg_by_us = false;
@@ -1605,11 +1472,12 @@ static void calibrate_finish(App* app) {
     if(app->cal_best >= 0 && app->cal_best_score >= CAL_GOOD_SCORE) {
         uint8_t uart, baud;
         calibrate_candidate((uint8_t)app->cal_best, &uart, &baud);
-        app->save.uart = uart;
-        app->save.baud_idx = baud;
-        app->save.source = ScanSourceBoard;
-        app->dirty = true;
-        app_save(app);
+        app->s.save.uart = uart;
+        app->s.save.baud_idx = baud;
+        session_set_demo(&app->s, false);
+        app->s.msg[0] = '\0';
+        app->s.dirty = true;
+        session_save(&app->s);
         snprintf(
             app->cal_result,
             sizeof(app->cal_result),
@@ -1621,7 +1489,7 @@ static void calibrate_finish(App* app) {
         app->cal_result[0] = '\0';
         notification_message(app->notif, &sequence_error);
     }
-    if(app->cal_otg_by_us && app->save.power % ScanPowerCount == ScanPowerAuto) {
+    if(app->cal_otg_by_us && app->s.save.power % ScanPowerCount == ScanPowerAuto) {
         scanner_power_off();
         app->cal_otg_by_us = false;
     }
@@ -1732,7 +1600,7 @@ static void board_input(App* app, InputEvent* ev, bool press, int dy) {
         board_change(app, row, ev->key == InputKeyLeft ? -1 : 1);
     } else if(press && ev->key == InputKeyOk) {
         if(row == BoardTerminal) {
-            if(app->save.source == ScanSourceDemo) {
+            if(app->s.save.source == ScanSourceDemo) {
                 app_toast(app, "Set Source to ESP32 first");
             } else {
                 app->term_otg_by_us = false;
@@ -1747,20 +1615,23 @@ static void board_input(App* app, InputEvent* ev, bool press, int dy) {
         }
     } else if(press && ev->key == InputKeyBack) {
         app->screen = ScreenSettings;
-        if(app->dirty) app_save(app);
+        if(app->s.dirty) session_save(&app->s);
     }
 }
 
+/* Shows the session's message for the last action, if it has one. */
+static void app_say(App* app) {
+    if(app->s.msg[0]) app_toast(app, app->s.msg);
+    app->s.msg[0] = '\0';
+}
+
 static void collect_start(App* app) {
-    for(uint8_t i = 0; i < app->nearby_count; i++) {
-        if(app->nearby[i].state == NearbyWild && app_owns(app, app->nearby[i].mac))
-            app->nearby[i].state = NearbyOwned;
-    }
+    session_scan_start(&app->s);
     app->scan_started = furi_get_tick();
-    app->recharge_noted_count = 0;
+    /* The board scans for real sightings; demo sightings come from the session. */
     ScanConfig cfg;
     app_scan_config(app, &cfg);
-    if(!scanner_start(app->scanner, (ScanSource)app->save.source, &cfg)) {
+    if(!scanner_start(app->scanner, (ScanSource)app->s.save.source, &cfg)) {
         app_toast(app, scanner_error(app->scanner) ? scanner_error(app->scanner) : "Scanner error");
         notification_message(app->notif, &sequence_error);
     }
@@ -1769,298 +1640,57 @@ static void collect_start(App* app) {
 
 static void collect_stop(App* app) {
     scanner_stop(app->scanner);
+    session_scan_stop(&app->s);
     app->screen = ScreenMenu;
-    if(app->dirty) app_save(app);
-}
-
-static uint8_t app_hour(void) {
-    DateTime dt;
-    furi_hal_rtc_get_datetime(&dt);
-    return dt.hour % 24;
-}
-
-/* Remember an access point whose echoid is asleep at this hour (for the count). */
-static void note_asleep(App* app, const uint8_t mac[6]) {
-    uint32_t h = echo_hash_mac(mac);
-    uint16_t known = app->asleep_count < ASLEEP_MAX ? app->asleep_count : ASLEEP_MAX;
-    for(uint16_t i = 0; i < known; i++)
-        if(app->asleep[i] == h) return;
-    if(app->asleep_count < ASLEEP_MAX) app->asleep[app->asleep_count] = h;
-    if(app->asleep_count < UINT16_MAX) app->asleep_count++;
-}
-
-/* Drops nearby echoids that aren't out at the current hour. */
-static void nearby_prune_hour(App* app) {
-    uint8_t keep = 0;
-    for(uint8_t i = 0; i < app->nearby_count; i++) {
-        if(echo_active_at(app->nearby[i].mac, app->hour)) {
-            app->nearby[keep++] = app->nearby[i];
-        } else {
-            note_asleep(app, app->nearby[i].mac);
-        }
-    }
-    app->nearby_count = keep;
-    app->nearby_next_replace = 0;
-    if(app->nearby_idx >= keep) app->nearby_idx = keep ? keep - 1 : 0;
-    if(app->nearby_scroll > app->nearby_idx) app->nearby_scroll = app->nearby_idx;
-}
-
-static void handle_ap(App* app, const ScanEvent* ev) {
-    /* Echoids only come out at certain hours of the day. */
-    if(!echo_active_at(ev->mac, app->hour)) {
-        note_asleep(app, ev->mac);
-        return;
-    }
-    for(uint8_t i = 0; i < app->nearby_count; i++) {
-        if(memcmp(app->nearby[i].mac, ev->mac, 6) == 0) {
-            app->nearby[i].rssi = ev->rssi;
-            return;
-        }
-    }
-    Nearby* n;
-    if(app->nearby_count < NEARBY_MAX) {
-        n = &app->nearby[app->nearby_count++];
-    } else {
-        /* Recycle slots round-robin, but never the one in battle. */
-        uint8_t slot = app->nearby_next_replace;
-        if((int8_t)slot == app->battle_nearby && app_in_battle(app)) {
-            slot = (slot + 1) % NEARBY_MAX;
-        }
-        app->nearby_next_replace = (slot + 1) % NEARBY_MAX;
-        n = &app->nearby[slot];
-    }
-    memcpy(n->mac, ev->mac, 6);
-    n->rssi = ev->rssi;
-    strncpy(n->ssid, ev->name[0] ? ev->name : "<hidden>", NAME_LEN - 1);
-    n->ssid[NAME_LEN - 1] = '\0';
-    n->state = app_owns(app, ev->mac) ? NearbyOwned : NearbyWild;
-
-    /* Count each echoid once per outing, even if its list slot was recycled. */
-    uint32_t h = echo_hash_mac(ev->mac);
-    bool counted = false;
-    uint16_t known = app->spotted_count < SPOTTED_MAX ? app->spotted_count : SPOTTED_MAX;
-    for(uint16_t i = 0; i < known && !counted; i++)
-        counted = app->spotted[i] == h;
-    if(!counted) {
-        if(app->spotted_count < SPOTTED_MAX) app->spotted[app->spotted_count] = h;
-        if(app->spotted_count < UINT16_MAX) app->spotted_count++;
-    }
-    if(n->state == NearbyWild) notification_message(app->notif, &sequence_blink_green_10);
-}
-
-static void handle_bt(App* app, const ScanEvent* ev) {
-    SaveData* sv = &app->save;
-    uint32_t h = echo_hash_mac(ev->mac);
-    uint32_t remaining = 0;
-    Shard s = shard_from_mac(ev->mac);
-    /* Each device recharges before it drops its shard again; rarer shards take longer. */
-    if(!shard_claim(
-           sv->seen_bt,
-           sv->seen_bt_time,
-           &sv->seen_bt_count,
-           SEEN_BT_MAX,
-           h,
-           s.tier,
-           furi_hal_rtc_get_timestamp(),
-           &remaining)) {
-        /* Tell the player once per Collect visit, without hiding a new shard. */
-        bool noted = false;
-        for(uint8_t i = 0; i < app->recharge_noted_count && !noted; i++)
-            noted = app->recharge_noted[i] == h;
-        if(noted || (app->toast_important && app_toast_showing(app))) return;
-        if(app->recharge_noted_count < RECHARGE_NOTED_MAX)
-            app->recharge_noted[app->recharge_noted_count++] = h;
-        char left[12];
-        format_duration(remaining, left, sizeof(left));
-        char msg[40];
-        snprintf(
-            msg,
-            sizeof(msg),
-            "%s %s: %s left",
-            s.tier == ShardPrismatic ? "Prism" : shard_tier_name(s.tier), /* fit 128px */
-            echo_type_name(s.type),
-            left);
-        app_toast(app, msg);
-        return;
-    }
-    if(sv->inv.shards[s.type][s.tier] < 9999) sv->inv.shards[s.type][s.tier]++;
-    sv->shards_found++;
-    if(app->shards_this_run < UINT16_MAX) app->shards_this_run++;
-    app->dirty = true;
-
-    char msg[40];
-    snprintf(msg, sizeof(msg), "+1 %s %s shard", shard_tier_name(s.tier), echo_type_name(s.type));
-    app_toast(app, msg);
-    app->toast_important = true;
-    notification_message(
-        app->notif, s.tier == ShardPrismatic ? &sequence_blink_magenta_100 : &sequence_blink_cyan_10);
 }
 
 static void battle_begin(App* app) {
-    if(app->nearby_count == 0) return;
-    Nearby* n = &app->nearby[app->nearby_idx];
-    /* Check ownership live (team and PAC), not just the list's cached mark. */
-    if(n->state == NearbyOwned || app_owns(app, n->mac)) {
-        n->state = NearbyOwned;
-        app_toast(app, "Already caught");
+    if(app->s.nearby_count == 0) return;
+    if(!session_battle_begin(&app->s, app->nearby_idx)) {
+        app_say(app);
         return;
     }
-    if(n->state == NearbyDone) {
-        app_toast(app, "Already fought - find others");
-        return;
-    }
-    if(!echo_active_at(n->mac, app->hour)) {
-        app_toast(app, "It went to sleep...");
-        return;
-    }
-    /* The lead fights; if it has fainted, the first healthy team member does. */
-    Echoid* lead = app_lead(app);
-    if(lead->hp == 0) {
-        lead = NULL;
-        for(uint8_t i = 0; i < app->save.team_count && !lead; i++)
-            if(app->save.team[i].hp > 0) lead = &app->save.team[i];
-    }
-    if(!lead) {
-        app_toast(app, "All fainted: use Revives");
-        return;
-    }
-    /* Wild levels follow your lead, even if another echoid starts. */
-    battle_start(
-        &app->battle, lead, n->mac, echo_wild_level(n->mac, app_lead(app)->level), n->ssid);
-    app->battle_nearby = (int8_t)app->nearby_idx;
     app->battle_menu = 0;
     app->screen = ScreenBattle;
     notification_message(app->notif, &sequence_single_vibro);
 }
 
-static void battle_log_line(Battle* b, const char* msg) {
-    memmove(b->log[0], b->log[1], BATTLE_LOG_LEN);
-    strncpy(b->log[1], msg, BATTLE_LOG_LEN - 1);
-    b->log[1][BATTLE_LOG_LEN - 1] = '\0';
-}
-
-static void result_add(App* app, const char* line) {
-    if(app->result_count >= RESULT_LINES_MAX) return;
-    strncpy(app->result_lines[app->result_count], line, sizeof(app->result_lines[0]) - 1);
-    app->result_lines[app->result_count][sizeof(app->result_lines[0]) - 1] = '\0';
-    app->result_count++;
-}
-
-/* Lists what every echoid that fought got out of the battle. */
-static void battle_results_build(App* app) {
-    Battle* b = &app->battle;
-    char line[40];
-    app->result_count = 0;
-    app->result_scroll = 0;
-    for(uint8_t i = 0; i < b->fought_n; i++) {
-        Echoid* e = b->fought[i];
-        uint8_t before = b->fought_level_before[i];
-        char name[ECHO_NAME_LEN];
-        echo_name(e->mac, name, sizeof(name));
-        if(e->level > before)
-            snprintf(
-                line,
-                sizeof(line),
-                "%s +%lu Lv%u>%u",
-                name,
-                (unsigned long)b->fought_xp[i],
-                before,
-                e->level);
-        else
-            snprintf(
-                line,
-                sizeof(line),
-                "%s +%lu XP",
-                name,
-                (unsigned long)b->fought_xp[i]);
-        result_add(app, line);
-        for(uint16_t lv = (uint16_t)before + 1; lv <= e->level; lv++) {
-            const Move* m = echo_move_learned_at(e->mac, (uint8_t)lv);
-            if(m) {
-                snprintf(line, sizeof(line), "  learned %s", m->name);
-                result_add(app, line);
-            }
-        }
-    }
-}
-
 /* Opens the switch picker; forced when the active echoid has fainted. */
-static void battle_swap_open(App* app, bool forced) {
-    bool any = false;
-    for(uint8_t i = 0; i < app->save.team_count; i++)
-        if(&app->save.team[i] != app->battle.mine && app->save.team[i].hp > 0) any = true;
-    if(!any) {
-        if(!forced) battle_log_line(&app->battle, "No one else can fight!");
+static void battle_swap_open(App* app) {
+    if(!session_battle_others_can_fight(&app->s)) {
+        app_toast(app, "No one else can fight!");
         return;
     }
-    app->bswap_forced = forced;
+    /* Start on the first team member that can go in. */
     app->bswap_idx = 0;
     app->bswap_scroll = 0;
-    /* Start on the first healthy team member that isn't fighting. */
-    for(uint8_t i = 0; i < app->save.team_count; i++) {
-        if(&app->save.team[i] != app->battle.mine && app->save.team[i].hp > 0) {
+    for(uint8_t i = 0; i < app->s.save.team_count; i++) {
+        if(session_battle_can_switch_to(&app->s, i)) {
             app->bswap_idx = i;
             break;
         }
     }
-    list_move(&app->bswap_idx, &app->bswap_scroll, app->save.team_count, TEAM_ROWS, 0);
+    app->s.msg[0] = '\0';
+    list_move(&app->bswap_idx, &app->bswap_scroll, app->s.save.team_count, TEAM_ROWS, 0);
     app->screen = ScreenBattleSwap;
 }
 
+/* After a battle action: the right screen and a sound for what happened. */
 static void battle_after_action(App* app) {
-    Battle* b = &app->battle;
-    /* Fainted with healthy echoids left: the battle goes on with a replacement. */
-    if(b->result == BattleLost) {
-        for(uint8_t i = 0; i < app->save.team_count; i++) {
-            if(&app->save.team[i] != b->mine && app->save.team[i].hp > 0) {
-                b->result = BattleOngoing;
-                battle_swap_open(app, true);
-                return;
-            }
-        }
+    Battle* b = &app->s.battle;
+    app->screen = ScreenBattle;
+    if(app->s.must_switch) {
+        battle_swap_open(app);
+        return;
     }
     if(b->result == BattleOngoing) return;
-    char msg[BATTLE_LOG_LEN];
-    Nearby* n = (app->battle_nearby >= 0 && app->battle_nearby < app->nearby_count) ?
-                    &app->nearby[app->battle_nearby] :
-                    NULL;
-    if(n && memcmp(n->mac, b->wild.mac, 6) != 0) n = NULL;
-
+    pac_invalidate(app); /* a catch may have gone to the PAC */
     switch(b->result) {
-    case BattleCaptured: {
-        SaveData* sv = &app->save;
-        Echoid caught = b->wild;
-        if(caught.hp == 0) caught.hp = 1;
-        caught.flags = 0;
-        bool stored = false;
-        if(app_owns(app, caught.mac)) {
-            /* Never store a second copy of an echoid you already have. */
-            battle_log_line(b, "Already caught this one!");
-        } else if(sv->team_count < PARTY_MAX) {
-            sv->team[sv->team_count++] = caught;
-            stored = true;
-        } else if(pac_has_room(app) && pac_append(&caught)) {
-            sv->pac_count++;
-            pac_invalidate(app);
-            battle_log_line(b, "Team full: sent to PAC");
-            stored = true;
-        } else {
-            battle_log_line(b, "Couldn't store it!");
-        }
-        if(stored) {
-            sv->captures++;
-            notification_message(app->notif, &sequence_success);
-        }
-        if(n && (stored || app_owns(app, caught.mac))) n->state = NearbyOwned;
+    case BattleCaptured:
+        notification_message(app->notif, &sequence_success);
         break;
-    }
     case BattleWon:
-        app->save.wins++;
-        if(n) n->state = NearbyDone;
         notification_message(app->notif, &sequence_semi_success);
-        break;
-    case BattleFled:
-        if(n) n->state = NearbyDone;
         break;
     case BattleLost:
         notification_message(app->notif, &sequence_error);
@@ -2068,112 +1698,6 @@ static void battle_after_action(App* app) {
     default:
         break;
     }
-    if(b->xp_gained) {
-        if(b->fought_n > 1)
-            snprintf(
-                msg,
-                sizeof(msg),
-                "+%lu XP shared by %u",
-                (unsigned long)b->xp_gained,
-                b->fought_n);
-        else
-            snprintf(msg, sizeof(msg), "+%lu XP", (unsigned long)b->xp_gained);
-        battle_log_line(b, msg);
-        /* A one-line summary; the results screen has the details. */
-        uint8_t levelled = 0;
-        const Move* learned = NULL;
-        for(uint8_t i = 0; i < b->fought_n; i++) {
-            Echoid* e = b->fought[i];
-            if(e->level > b->fought_level_before[i]) levelled++;
-            for(uint16_t lv = (uint16_t)b->fought_level_before[i] + 1; lv <= e->level; lv++) {
-                const Move* m = echo_move_learned_at(e->mac, (uint8_t)lv);
-                if(m) learned = m;
-            }
-        }
-        if(learned) {
-            snprintf(msg, sizeof(msg), "Learned %s!", learned->name);
-            battle_log_line(b, msg);
-            notification_message(app->notif, &sequence_success);
-        } else if(levelled) {
-            snprintf(msg, sizeof(msg), "%u level up%s!", levelled, levelled > 1 ? "s" : "");
-            battle_log_line(b, msg);
-        }
-    }
-    app->dirty = true;
-}
-
-/* Uses a Tonic or Echo Crystal on one team member. Returns true if used. */
-static bool use_item_on(App* app, uint8_t item, Echoid* target) {
-    Inventory* inv = &app->save.inv;
-    EchoStats s;
-    echo_stats(target, &s);
-    char name[ECHO_NAME_LEN];
-    echo_name(target->mac, name, sizeof(name));
-    char msg[40];
-    if(inv->items[item] == 0) {
-        app_toast(app, "You have none");
-        return false;
-    }
-    uint16_t heal = item_heal_amount(item);
-    if(heal) {
-        /* Tonics: a fainted echoid needs a Revive Crystal first. */
-        if(target->hp == 0) {
-            snprintf(msg, sizeof(msg), "%s fainted: revive first", name);
-            app_toast(app, msg);
-            return false;
-        }
-        if(target->hp >= s.max_hp) {
-            snprintf(msg, sizeof(msg), "%s is at full HP", name);
-            app_toast(app, msg);
-            return false;
-        }
-        uint16_t before = target->hp;
-        uint32_t hp = heal == ITEM_HEAL_FULL ? s.max_hp : (uint32_t)target->hp + heal;
-        target->hp = hp > s.max_hp ? s.max_hp : (uint16_t)hp;
-        inv->items[item]--;
-        if(target->hp == s.max_hp)
-            snprintf(msg, sizeof(msg), "%s fully healed!", name);
-        else
-            snprintf(msg, sizeof(msg), "%s +%u HP", name, target->hp - before);
-        app_toast(app, msg);
-    } else if(item == ItemRevive) {
-        if(target->hp > 0) {
-            snprintf(msg, sizeof(msg), "%s hasn't fainted", name);
-            app_toast(app, msg);
-            return false;
-        }
-        target->hp = 1;
-        inv->items[item]--;
-        snprintf(msg, sizeof(msg), "%s revived (1 HP)", name);
-        app_toast(app, msg);
-    } else if(item == ItemCrystal) {
-        if(target->level >= MAX_LEVEL) {
-            snprintf(msg, sizeof(msg), "%s is max level", name);
-            app_toast(app, msg);
-            return false;
-        }
-        inv->items[item]--;
-        uint16_t xp = echo_xp_to_next(target->level) / 2;
-        uint8_t before = target->level;
-        uint8_t lv = echo_add_xp(target, xp);
-        const Move* learned = NULL;
-        for(uint16_t l = (uint16_t)before + 1; l <= target->level; l++) {
-            const Move* m = echo_move_learned_at(target->mac, (uint8_t)l);
-            if(m) learned = m;
-        }
-        if(learned)
-            snprintf(msg, sizeof(msg), "Lv%u! Learned %s", target->level, learned->name);
-        else if(lv)
-            snprintf(msg, sizeof(msg), "%s +%u XP! Lv%u", name, xp, target->level);
-        else
-            snprintf(msg, sizeof(msg), "%s +%u XP", name, xp);
-        app_toast(app, msg);
-    } else {
-        return false;
-    }
-    notification_message(app->notif, &sequence_success);
-    app->dirty = true;
-    return true;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -2198,7 +1722,7 @@ static void list_move32(uint32_t* idx, uint32_t* scroll, uint32_t count, uint32_
 }
 
 static void pac_view_load(App* app) {
-    if(app->save.pac_count == 0 || !pac_read(app->pac_idx, &app->pac_view))
+    if(app->s.save.pac_count == 0 || !pac_read(app->pac_idx, &app->pac_view))
         memset(&app->pac_view, 0, sizeof(app->pac_view));
 }
 
@@ -2208,11 +1732,11 @@ static void team_open(App* app, uint8_t tab, uint32_t select) {
     if(tab == 0) {
         app->team_idx = (uint8_t)select;
         app->team_scroll = 0;
-        list_move(&app->team_idx, &app->team_scroll, app->save.team_count, TEAM_ROWS, 0);
+        list_move(&app->team_idx, &app->team_scroll, app->s.save.team_count, TEAM_ROWS, 0);
     } else {
         app->pac_idx = select;
         app->pac_scroll = 0;
-        list_move32(&app->pac_idx, &app->pac_scroll, app->save.pac_count, TEAM_ROWS, 0);
+        list_move32(&app->pac_idx, &app->pac_scroll, app->s.save.pac_count, TEAM_ROWS, 0);
         pac_invalidate(app);
         pac_refresh(app);
     }
@@ -2222,61 +1746,27 @@ static void team_open(App* app, uint8_t tab, uint32_t select) {
 
 /* Team member -> end of the PAC. */
 static void team_send_to_pac(App* app, uint8_t idx) {
-    char msg[40];
-    char name[ECHO_NAME_LEN];
-    echo_name(app->save.team[idx].mac, name, sizeof(name));
-    if(app->save.team_count <= 1) {
-        app_toast(app, "Team needs one echoid");
-        return;
+    bool ok = session_team_to_pac(&app->s, idx);
+    if(ok) {
+        pac_invalidate(app);
+        team_open(app, 0, app->s.save.lead);
     }
-    if(!pac_has_room(app)) {
-        app_toast(app, "PAC full: craft a PAC");
-        return;
-    }
-    Echoid e = app->save.team[idx];
-    e.flags = 0;
-    if(!pac_append(&e)) {
-        app_toast(app, "SD card write failed");
-        return;
-    }
-    snprintf(msg, sizeof(msg), "%s sent to PAC", name);
-    team_remove(app->save.team, &app->save.team_count, &app->save.lead, idx, NULL);
-    app->save.pac_count++;
-    pac_invalidate(app);
-    app_save(app); /* keep save.bin in step with pac.bin */
-    team_open(app, 0, app->save.lead);
-    app_toast(app, msg);
+    app_say(app);
 }
 
-/* PAC echoid (pac_view at pac_idx) -> team. Echoids leave the PAC fully healed. */
+/* PAC echoid at pac_idx -> team. */
 static void pac_send_to_team(App* app) {
-    char msg[40];
-    Echoid e = app->pac_view;
-    EchoStats st;
-    echo_stats(&e, &st);
-    e.hp = st.max_hp;
-    e.flags = 0;
-    if(!pac_remove(app->pac_idx, app->save.pac_count)) {
-        app_toast(app, "SD card write failed");
-        return;
+    bool ok = session_pac_to_team(&app->s, app->pac_idx);
+    if(ok) {
+        pac_invalidate(app);
+        team_open(app, 0, app->s.save.team_count - 1);
     }
-    app->save.pac_count--;
-    app->save.team[app->save.team_count++] = e;
-    pac_invalidate(app);
-    app_save(app);
-    char name[ECHO_NAME_LEN];
-    echo_name(e.mac, name, sizeof(name));
-    snprintf(msg, sizeof(msg), "%s joined the team", name);
-    team_open(app, 0, app->save.team_count - 1);
-    app_toast(app, msg);
+    app_say(app);
 }
 
 static void detail_input(App* app, InputEvent* ev, bool press, int dy) {
     uint32_t pos, n;
-    const Echoid* target = detail_target(app, &pos, &n);
-    char name[ECHO_NAME_LEN];
-    echo_name(target->mac, name, sizeof(name));
-    char msg[40];
+    detail_target(app, &pos, &n);
 
     if(app->detail_menu) {
         uint8_t count = app->team_tab == 0 ? 2 : 1;
@@ -2287,17 +1777,12 @@ static void detail_input(App* app, InputEvent* ev, bool press, int dy) {
         } else if(press && ev->key == InputKeyOk) {
             app->detail_menu = false;
             if(app->team_tab == 0 && app->detail_menu_idx == 0) {
-                /* Set as lead */
-                if(app->save.lead != pos) {
-                    app->save.lead = (uint8_t)pos;
-                    app->dirty = true;
-                    snprintf(msg, sizeof(msg), "%s is now lead", name);
-                    app_toast(app, msg);
+                if(session_set_lead(&app->s, (uint8_t)pos))
                     notification_message(app->notif, &sequence_blink_green_10);
-                }
+                app_say(app);
             } else if(app->team_tab == 0) {
                 team_send_to_pac(app, (uint8_t)pos);
-            } else if(app->save.team_count < PARTY_MAX) {
+            } else if(!session_team_full(&app->s)) {
                 pac_send_to_team(app);
             } else {
                 /* Team full: choose who goes into the PAC in its place. */
@@ -2313,9 +1798,9 @@ static void detail_input(App* app, InputEvent* ev, bool press, int dy) {
     if(press && (ev->key == InputKeyLeft || ev->key == InputKeyRight)) {
         int d = ev->key == InputKeyLeft ? -1 : 1;
         if(app->team_tab == 0) {
-            list_move(&app->team_idx, &app->team_scroll, app->save.team_count, TEAM_ROWS, d);
+            list_move(&app->team_idx, &app->team_scroll, app->s.save.team_count, TEAM_ROWS, d);
         } else {
-            list_move32(&app->pac_idx, &app->pac_scroll, app->save.pac_count, TEAM_ROWS, d);
+            list_move32(&app->pac_idx, &app->pac_scroll, app->s.save.pac_count, TEAM_ROWS, d);
             pac_view_load(app);
             pac_refresh(app);
         }
@@ -2351,7 +1836,7 @@ static void handle_input(App* app, InputEvent* ev) {
                 collect_start(app);
                 break;
             case MenuTeam:
-                team_open(app, 0, app->save.lead);
+                team_open(app, 0, app->s.save.lead);
                 break;
             case MenuPac:
                 team_open(app, 1, 0); /* straight to Cold PAC Storage */
@@ -2374,7 +1859,7 @@ static void handle_input(App* app, InputEvent* ev) {
 
     case ScreenCollect:
         if(dy) {
-            list_move(&app->nearby_idx, &app->nearby_scroll, app->nearby_count, NEARBY_ROWS, dy);
+            list_move(&app->nearby_idx, &app->nearby_scroll, app->s.nearby_count, NEARBY_ROWS, dy);
         } else if(press && ev->key == InputKeyOk) {
             battle_begin(app);
         } else if(press && ev->key == InputKeyBack) {
@@ -2383,15 +1868,11 @@ static void handle_input(App* app, InputEvent* ev) {
         break;
 
     case ScreenBattle:
-        if(app->battle.result != BattleOngoing) {
+        if(app->s.battle.result != BattleOngoing) {
             if(press && (ev->key == InputKeyOk || ev->key == InputKeyBack)) {
-                if(app->battle.xp_gained) {
-                    battle_results_build(app);
-                    app->screen = ScreenBattleResult;
-                } else {
-                    app->screen = ScreenCollect;
-                }
-                if(app->dirty) app_save(app);
+                session_battle_close(&app->s);
+                app->result_scroll = 0;
+                app->screen = app->s.battle.xp_gained ? ScreenBattleResult : ScreenCollect;
             }
             break;
         }
@@ -2401,34 +1882,33 @@ static void handle_input(App* app, InputEvent* ev) {
             switch(app->battle_menu) {
             case 0: {
                 Move moves[MAX_MOVES];
-                if(app->move_idx >= echo_moves(app->battle.mine, moves)) app->move_idx = 0;
+                if(app->move_idx >= echo_moves(app->s.battle.mine, moves)) app->move_idx = 0;
                 app->screen = ScreenMovePick;
                 break;
             }
             case 1:
-                battle_swap_open(app, false);
+                battle_swap_open(app);
                 break;
-            case 2:
-                if(app_owns(app, app->battle.wild.mac)) {
-                    battle_log_line(&app->battle, "Already caught this one!");
-                } else if(app->save.team_count >= PARTY_MAX && !pac_has_room(app)) {
-                    battle_log_line(&app->battle, "No room: craft a PAC!");
-                } else {
+            case 2: {
+                const char* why = session_catch_blocked(&app->s);
+                if(why)
+                    app_toast(app, why);
+                else
                     app->screen = ScreenBallPick;
-                }
-                break;
-            case 3:
-                battle_flee(&app->battle);
                 break;
             }
-            battle_after_action(app);
+            case 3:
+                session_battle_run(&app->s);
+                battle_after_action(app);
+                break;
+            }
         }
         break;
 
     case ScreenBattleResult:
         if(dy) {
             int n = (int)app->result_scroll + dy;
-            int max = app->result_count > RESULT_ROWS ? app->result_count - RESULT_ROWS : 0;
+            int max = app->s.result_count > RESULT_ROWS ? app->s.result_count - RESULT_ROWS : 0;
             if(n < 0) n = 0;
             if(n > max) n = max;
             app->result_scroll = (uint8_t)n;
@@ -2439,21 +1919,15 @@ static void handle_input(App* app, InputEvent* ev) {
 
     case ScreenBattleSwap: {
         if(dy) {
-            list_move(&app->bswap_idx, &app->bswap_scroll, app->save.team_count, TEAM_ROWS, dy);
-        } else if(press && ev->key == InputKeyBack && !app->bswap_forced) {
+            list_move(&app->bswap_idx, &app->bswap_scroll, app->s.save.team_count, TEAM_ROWS, dy);
+        } else if(press && ev->key == InputKeyBack && !app->s.must_switch) {
             app->screen = ScreenBattle;
-        } else if(press && ev->key == InputKeyOk && app->bswap_idx < app->save.team_count) {
-            Echoid* next = &app->save.team[app->bswap_idx];
-            if(next == app->battle.mine) {
-                app_toast(app, "Already fighting");
-            } else if(next->hp == 0) {
-                app_toast(app, "It has fainted");
-            } else {
-                battle_switch(&app->battle, next, !app->bswap_forced);
-                app->bswap_forced = false;
+        } else if(press && ev->key == InputKeyOk) {
+            if(session_battle_switch(&app->s, app->bswap_idx)) {
                 app->move_idx = 0;
-                app->screen = ScreenBattle;
                 battle_after_action(app);
+            } else {
+                app_say(app);
             }
         }
         break;
@@ -2461,13 +1935,12 @@ static void handle_input(App* app, InputEvent* ev) {
 
     case ScreenMovePick: {
         Move moves[MAX_MOVES];
-        uint8_t n = echo_moves(app->battle.mine, moves);
+        uint8_t n = echo_moves(app->s.battle.mine, moves);
         if(dy && n) app->move_idx = (uint8_t)((app->move_idx + n + dy) % n);
         if(press && ev->key == InputKeyBack) app->screen = ScreenBattle;
         if(press && ev->key == InputKeyOk) {
             /* The move stays selected for next turn. */
-            battle_attack(&app->battle, app->move_idx);
-            app->screen = ScreenBattle;
+            session_battle_move(&app->s, app->move_idx);
             battle_after_action(app);
         }
         break;
@@ -2477,18 +1950,15 @@ static void handle_input(App* app, InputEvent* ev) {
         if(dy) app->ball_idx = (uint8_t)((app->ball_idx + 3 + dy) % 3);
         if(press && ev->key == InputKeyBack) app->screen = ScreenBattle;
         if(press && ev->key == InputKeyOk) {
-            if(!battle_throw(&app->battle, &app->save.inv, app->ball_idx)) {
-                battle_log_line(&app->battle, "No balls of that kind!");
-            }
-            app->dirty = true;
-            app->screen = ScreenBattle;
+            session_battle_ball(&app->s, app->ball_idx);
+            app->s.msg[0] = '\0'; /* the battle log says what happened */
             battle_after_action(app);
         }
         break;
 
     case ScreenTeam: {
         bool pac = app->team_tab == 1;
-        uint32_t n = pac ? app->save.pac_count : app->save.team_count;
+        uint32_t n = pac ? app->s.save.pac_count : app->s.save.team_count;
         if(dy) {
             if(pac) {
                 list_move32(&app->pac_idx, &app->pac_scroll, n, TEAM_ROWS, dy);
@@ -2499,7 +1969,7 @@ static void handle_input(App* app, InputEvent* ev) {
         } else if(press && (ev->key == InputKeyLeft || ev->key == InputKeyRight)) {
             app->team_tab ^= 1; /* Team <-> PAC */
             if(app->team_tab == 1) {
-                list_move32(&app->pac_idx, &app->pac_scroll, app->save.pac_count, TEAM_ROWS, 0);
+                list_move32(&app->pac_idx, &app->pac_scroll, app->s.save.pac_count, TEAM_ROWS, 0);
                 pac_invalidate(app);
                 pac_refresh(app);
             }
@@ -2519,36 +1989,15 @@ static void handle_input(App* app, InputEvent* ev) {
 
     case ScreenSwap: {
         if(dy) {
-            list_move(&app->swap_idx, &app->swap_scroll, app->save.team_count, TEAM_ROWS, dy);
-        } else if(press && ev->key == InputKeyOk && app->swap_idx < app->save.team_count) {
+            list_move(&app->swap_idx, &app->swap_scroll, app->s.save.team_count, TEAM_ROWS, dy);
+        } else if(press && ev->key == InputKeyOk && app->swap_idx < app->s.save.team_count) {
             /* The team member takes the PAC echoid's slot, and vice versa. */
-            Echoid out = app->save.team[app->swap_idx];
-            Echoid in = app->pac_view;
-            EchoStats st;
-            echo_stats(&in, &st);
-            in.hp = st.max_hp; /* echoids leave the PAC fully healed */
-            out.flags = 0;
-            in.flags = 0;
-            if(pac_write(app->pac_idx, &out)) {
-                app->save.team[app->swap_idx] = in;
+            if(session_swap(&app->s, app->pac_idx, app->swap_idx)) {
                 pac_invalidate(app);
-                app_save(app);
-                char msg[40];
-                char in_name[ECHO_NAME_LEN], out_name[ECHO_NAME_LEN];
-                echo_name(in.mac, in_name, sizeof(in_name));
-                echo_name(out.mac, out_name, sizeof(out_name));
-                snprintf(
-                    msg,
-                    sizeof(msg),
-                    "%s <> %s",
-                    in_name,
-                    out_name);
                 notification_message(app->notif, &sequence_success);
                 team_open(app, 0, app->swap_idx);
-                app_toast(app, msg);
-            } else {
-                app_toast(app, "SD card write failed");
             }
+            app_say(app);
         } else if(press && ev->key == InputKeyBack) {
             app->screen = ScreenDetail;
         }
@@ -2559,25 +2008,9 @@ static void handle_input(App* app, InputEvent* ev) {
         if(dy) {
             list_move(&app->craft_idx, &app->craft_scroll, recipe_count, CRAFT_ROWS, dy);
         } else if(press && ev->key == InputKeyOk) {
-            if(craft_do(&app->save.inv, app->craft_idx)) {
-                char msg[40];
-                if(recipe_is_pac(app->craft_idx)) {
-                    if(app->save.pacs < UINT32_MAX / PAC_SIZE) app->save.pacs++;
-                    snprintf(
-                        msg,
-                        sizeof(msg),
-                        "New PAC! Room for %lu",
-                        (unsigned long)save_pac_capacity(&app->save));
-                } else {
-                    snprintf(msg, sizeof(msg), "Crafted %s!", recipes[app->craft_idx].name);
-                }
-                app_toast(app, msg);
-                notification_message(app->notif, &sequence_success);
-                app->dirty = true;
-            } else {
-                app_toast(app, "Not enough shards");
-                notification_message(app->notif, &sequence_error);
-            }
+            bool ok = session_craft(&app->s, app->craft_idx);
+            notification_message(app->notif, ok ? &sequence_success : &sequence_error);
+            app_say(app);
         } else if(press && ev->key == InputKeyBack) {
             app->screen = ScreenMenu;
         }
@@ -2590,17 +2023,16 @@ static void handle_input(App* app, InputEvent* ev) {
             list_move(&app->bag_idx, &app->bag_scroll, ItemCount, BAG_ROWS, dy);
         } else if(press && ev->key == InputKeyOk && app->bag_tab == 0) {
             uint8_t item = app->bag_idx;
-            bool usable = item_heal_amount(item) || item == ItemRevive || item == ItemCrystal;
-            if(!usable) {
+            if(session_item_use(item) == ItemUseNone) {
                 app_toast(app, "Use balls in battle");
-            } else if(app->save.inv.items[item] == 0) {
+            } else if(app->s.save.inv.items[item] == 0) {
                 app_toast(app, "You have none");
             } else {
                 /* Choose who to use it on, starting at the lead. */
                 app->use_item_id = item;
-                app->use_idx = app->save.lead;
+                app->use_idx = app->s.save.lead;
                 app->use_scroll = 0;
-                list_move(&app->use_idx, &app->use_scroll, app->save.team_count, TEAM_ROWS, 0);
+                list_move(&app->use_idx, &app->use_scroll, app->s.save.team_count, TEAM_ROWS, 0);
                 app->toast_until = 0;
                 app->screen = ScreenUseOn;
             }
@@ -2628,21 +2060,20 @@ static void handle_input(App* app, InputEvent* ev) {
                     app->confirm_reset = true;
                 } else {
                     app->confirm_reset = false;
-                    app_new_game(app);
-                    app->nearby_count = 0;
-                    app->nearby_idx = 0;
-                    app->nearby_scroll = 0;
-                    app->spotted_count = 0;
-                    app->shards_this_run = 0;
-                    app_save(app);
-                    app->screen = ScreenIntro;
+                    if(session_reset(&app->s)) {
+                        pac_invalidate(app);
+                        app->nearby_idx = 0;
+                        app->nearby_scroll = 0;
+                        app->screen = ScreenIntro;
+                    }
+                    app_say(app);
                 }
                 break;
             }
         } else if(press && ev->key == InputKeyBack) {
             app->confirm_reset = false;
             app->screen = ScreenMenu;
-            if(app->dirty) app_save(app);
+            if(app->s.dirty) session_save(&app->s);
         }
         break;
 
@@ -2656,12 +2087,16 @@ static void handle_input(App* app, InputEvent* ev) {
 
     case ScreenUseOn: {
         if(dy) {
-            list_move(&app->use_idx, &app->use_scroll, app->save.team_count, TEAM_ROWS, dy);
-        } else if(press && ev->key == InputKeyOk && app->use_idx < app->save.team_count) {
+            list_move(&app->use_idx, &app->use_scroll, app->s.save.team_count, TEAM_ROWS, dy);
+        } else if(press && ev->key == InputKeyOk && app->use_idx < app->s.save.team_count) {
             /* On success go back to the Bag (the toast shows there); on a
              * refusal (already healthy, max level) stay so another can be picked. */
-            if(use_item_on(app, app->use_item_id, &app->save.team[app->use_idx]))
+            bool ok = session_use_item(&app->s, app->use_item_id, app->use_idx);
+            if(ok) {
+                notification_message(app->notif, &sequence_success);
                 app->screen = ScreenBag;
+            }
+            app_say(app);
         } else if(press && ev->key == InputKeyBack) {
             app->screen = ScreenBag;
         }
@@ -2693,45 +2128,40 @@ static void handle_input(App* app, InputEvent* ev) {
 /* ------------------------------------------------------------------------- */
 
 static void app_tick(App* app) {
-    uint32_t now = furi_get_tick();
-
-
-    /* A new hour brings different echoids (wait until any battle is over). */
-    app->hour = app_hour();
-    if(app->hour != app->hour_checked && !app_in_battle(app)) {
-        app->hour_checked = app->hour;
-        app->asleep_count = 0;
-        nearby_prune_hour(app);
-    }
-
+    /* Sightings from the board go to the session (not while debugging it). */
     ScanEvent ev;
     bool debug = app->screen == ScreenTerminal || app->screen == ScreenCalibrate;
-    for(int i = 0; i < 8 && scanner_poll(app->scanner, &ev); i++) {
-        if(debug) continue; /* counted in the scanner stats only */
-        if(ev.type == ScanEventAp)
-            handle_ap(app, &ev);
-        else
-            handle_bt(app, &ev);
-    }
+    for(int i = 0; i < 8 && scanner_poll(app->scanner, &ev); i++)
+        if(!debug) session_sighting(&app->s, &ev);
 
     if(app->screen == ScreenCalibrate) calibrate_tick(app);
 
-    bool in_battle = app_in_battle(app);
-    if(now - app->last_regen >= furi_ms_to_ticks(REGEN_MS)) {
-        app->last_regen = now;
-        if(!in_battle) {
-            for(uint8_t i = 0; i < app->save.team_count; i++) {
-                Echoid* e = &app->save.team[i];
-                EchoStats s;
-                echo_stats(e, &s);
-                /* Fainted echoids stay down until a Revive Crystal. */
-                if(e->hp > 0 && e->hp < s.max_hp) e->hp++;
-            }
-        }
-    }
+    session_tick(&app->s);
 
-    if(app->dirty && !in_battle && now - app->last_save >= furi_ms_to_ticks(AUTOSAVE_MS)) {
-        app_save(app);
+    /* The nearby list can shrink when the hour changes. */
+    if(app->nearby_idx >= app->s.nearby_count)
+        app->nearby_idx = app->s.nearby_count ? app->s.nearby_count - 1 : 0;
+    if(app->nearby_scroll > app->nearby_idx) app->nearby_scroll = app->nearby_idx;
+
+    /* What happened while scanning: a popup and a blink. */
+    SessionEvent se;
+    while(session_take_event(&app->s, &se)) {
+        switch(se.kind) {
+        case SessionEventSpotted:
+            notification_message(app->notif, &sequence_blink_green_10);
+            break;
+        case SessionEventShard:
+            app_toast(app, se.text);
+            app->toast_important = true;
+            notification_message(
+                app->notif,
+                se.shard.tier == ShardPrismatic ? &sequence_blink_magenta_100 : &sequence_blink_cyan_10);
+            break;
+        case SessionEventRecharge:
+            /* Don't cover a new shard's popup with a recharge note. */
+            if(!(app->toast_important && app_toast_showing(app))) app_toast(app, se.text);
+            break;
+        }
     }
 }
 
@@ -2743,20 +2173,10 @@ int32_t echoids_app(void* p) {
     UNUSED(p);
     App* app = malloc(sizeof(App));
     memset(app, 0, sizeof(App));
-    app->battle_nearby = -1;
-    game_rng_seed(furi_hal_random_get());
-
-    if(save_load(&app->save)) {
-        app->screen = ScreenMenu;
-    } else {
-        app_new_game(app);
-        app_save(app);
-        app->screen = ScreenIntro;
-    }
-    app->last_regen = furi_get_tick();
-    app->last_save = furi_get_tick();
-    app->hour = app_hour();
-    app->hour_checked = app->hour;
+    /* The starter is born from this Flipper's own Bluetooth MAC. */
+    const char* name = furi_hal_version_get_name_ptr();
+    bool fresh = session_init(&app->s, furi_hal_version_get_ble_mac(), name ? name : "Flipper");
+    app->screen = fresh ? ScreenIntro : ScreenMenu;
 
     app->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     app->queue = furi_message_queue_alloc(8, sizeof(InputEvent));
@@ -2780,7 +2200,7 @@ int32_t echoids_app(void* p) {
     }
 
     scanner_stop(app->scanner);
-    app_save(app);
+    session_save(&app->s);
 
     view_port_enabled_set(app->view_port, false);
     gui_remove_view_port(app->gui, app->view_port);

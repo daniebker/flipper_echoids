@@ -189,7 +189,7 @@ int main(void) {
     engine_tick();
     /* A few may have been pushed out of the full table; most are recharging. */
     CHECK(state("shardsFound") - shards_before < 25);
-    CHECK(contains(engine_take_events_json(), "recharging"));
+    CHECK(contains(engine_take_events_json(), "\"kind\":\"recharge\""));
 
     /* More devices, so there are enough shards for plenty of balls and a few
      * Revive Crystals: a level 1 starter can lose its first fight. */

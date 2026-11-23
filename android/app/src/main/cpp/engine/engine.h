@@ -1,8 +1,7 @@
 /*
- * Echoids game engine for the Android app: one game session (save, nearby
- * echoids, battles, shards, team and PAC) with no UI. It uses the same rules
- * as the Flipper app (src/game.c, src/save.c, src/pac_store.c) and mirrors the
- * session behaviour of src/echoids.c, so both play the same.
+ * The Android app's game API: a JSON view of the shared session
+ * (src/session.c), which holds every game rule, so the phone and the Flipper
+ * play the same. This layer only converts state and actions to and from JSON.
  *
  * Not thread safe: the caller serialises calls (the JNI layer holds a lock).
  * State is returned as JSON strings that the caller must free().
